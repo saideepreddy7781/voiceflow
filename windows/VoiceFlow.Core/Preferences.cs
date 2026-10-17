@@ -130,7 +130,7 @@ public sealed class Preferences : IEquatable<Preferences>
     public bool MeetingsConsentReminder { get; set; } = true;
 
     // System
-    public bool ShowBarWhenIdle { get; set; } = true;
+    public bool ShowBarWhenIdle { get; set; } = false;
     /// <summary>0 keeps no history; -1 keeps it forever.</summary>
     public int HistoryRetentionDays { get; set; } = 30;
     public bool LaunchAtLogin { get; set; }

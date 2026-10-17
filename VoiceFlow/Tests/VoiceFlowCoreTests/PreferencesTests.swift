@@ -10,7 +10,7 @@ struct PreferencesTests {
         return defaults
     }
 
-    @Test func defaultsMatchThePlan() {
+    @Test func defaultsMatchTheApp() {
         let prefs = Preferences()
         #expect(prefs.hotkey == .fn)
         #expect(prefs.transcriptionModel == "whisper-large-v3-turbo")
@@ -20,6 +20,7 @@ struct PreferencesTests {
         #expect(prefs.cleanupLevel == .light)
         #expect(prefs.languages == ["en"])
         #expect(!prefs.debugLogging)
+        #expect(!prefs.showBarWhenIdle)   // the Flow bar appears only while dictating
     }
 
     @Test func everyFieldRoundTrips() {

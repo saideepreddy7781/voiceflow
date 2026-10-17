@@ -31,7 +31,7 @@ own [Groq](https://console.groq.com) API key; Groq's free tier covers normal dai
 | **Telugu** | Speak Telugu or Telugu-English and choose how it's typed: Telugu script, Telugu with English words in English, or Telish in English letters (nenu repu office ki vastanu). With English also selected, VoiceFlow transcribes both ways at once and keeps the right one, because Whisper's auto-detect often mistakes Telugu for Hindi, Tamil or English. |
 | **Notetaker** | Takes notes of your calls in Zoom, Meet, Teams, Webex or FaceTime: a live transcript labelled You / Others, then a summary, decisions, action items and open questions. Offers itself when a call starts, and saves each meeting as Markdown to a folder you choose (for example iCloud Drive). |
 | **Shortcuts** | **⌃⌘V** pastes your last transcript, **⌃⌘C** copies it, **Esc** cancels. |
-| **Flow bar** | A small pill at the bottom of the screen. Click it to start hands-free; right-click to hide it for an hour or switch language. |
+| **Flow bar** | A small pill at the bottom of the screen that appears only while you dictate, with live sound bars and ✕ / ✓ in hands-free mode. Settings can keep it on screen all the time, so you can click it to start hands-free. |
 | **Home and Insights** | Searchable history grouped by day, words per minute, fixes made, usage by kind of app, and an activity heatmap with streaks. All stored only on your computer. |
 | **Scratchpad** | Notes you can dictate into, opened from anywhere with **⌥S**. |
 

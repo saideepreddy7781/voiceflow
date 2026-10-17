@@ -28,6 +28,7 @@ public class PreferencesTests
         Assert.Equal(TeluguScript.Mixed, p.TeluguScript);
         Assert.Equal(30, p.HistoryRetentionDays);
         Assert.False(p.DebugLogging);
+        Assert.False(p.ShowBarWhenIdle);   // the Flow bar appears only while dictating
         Assert.False(p.LaunchAtLogin);           // Start with Windows is opt-in
     }
 

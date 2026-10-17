@@ -139,7 +139,7 @@ public struct Preferences: Equatable, Codable, Sendable {
 
     // System
     /// "Show Flow Bar at all times".
-    public var showBarWhenIdle: Bool = true
+    public var showBarWhenIdle: Bool = false
     public var showInDock: Bool = true
     /// 0 keeps no history; -1 keeps it forever.
     public var historyRetentionDays: Int = 30
