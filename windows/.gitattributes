@@ -1,0 +1,6 @@
+# Prompts are raw string literals: CRLF checkouts would change their text.
+*.cs text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.csproj text eol=lf
+*.ico binary

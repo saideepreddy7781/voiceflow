@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>VoiceFlow</string>
+	<key>CFBundleExecutable</key>
+	<string>VoiceFlow</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.saideep.voiceflow</string>
+	<key>CFBundleName</key>
+	<string>VoiceFlow</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>VoiceFlow records the meeting audio (the other people on your call) only while Notetaker is on, to transcribe it and write your meeting notes.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>VoiceFlow reads the calendar event happening now to title your meeting notes and spell attendee names correctly.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Saideep Reddy. MIT License.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>VoiceFlow records only while you dictate and sends the audio to Groq, using your API key, to turn it into text. Audio is never stored.</string>
+</dict>
+</plist>

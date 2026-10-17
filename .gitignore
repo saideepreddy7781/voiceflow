@@ -1,0 +1,32 @@
+# Build output
+build/
+VoiceFlow/.build/
+VoiceFlow/.swiftpm/
+*.dmg
+*.dmg.sha256
+
+# Generated audio fixtures (recreate with scripts/make_fixtures.py)
+fixtures/clips/
+
+# Secrets and local config: never commit
+.env
+.env.*
+*.p12
+*.cer
+*.mobileprovision
+
+
+# macOS
+.DS_Store
+*.ips
+__pycache__/
+*.pyc
+
+# Windows build output
+windows/**/bin/
+windows/**/obj/
+windows/.vs/
+*.user
+out/
+dist/
+selftest.txt

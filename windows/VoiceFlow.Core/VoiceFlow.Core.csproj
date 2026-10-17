@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform-independent logic: everything here is unit-tested on any OS. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>VoiceFlow.Core</RootNamespace>
+    <AssemblyName>VoiceFlow.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="VoiceFlow.Core.Tests" />
+  </ItemGroup>
+</Project>

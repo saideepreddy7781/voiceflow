@@ -1,0 +1,144 @@
+name: Release
+
+# Push a tag like v0.1.0 to build the macOS and Windows downloads, test them, and publish a GitHub release.
+# Release notes come from docs/releases/<tag>.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: v
+        name: Tag matches the app versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          mac="$(python3 -c 'import plistlib; print(plistlib.load(open("VoiceFlow/Support/Info.plist","rb"))["CFBundleShortVersionString"])')"
+          win="$(grep -oPm1 '(?<=<Version>)[^<]+' windows/Directory.Build.props)"
+          echo "tag=$tag macOS=$mac Windows=$win"
+          [ "$tag" = "$mac" ] && [ "$tag" = "$win" ] || { echo "Version mismatch"; exit 1; }
+          test -f "docs/releases/v$tag.md" || { echo "Missing docs/releases/v$tag.md"; exit 1; }
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        run: swift test --package-path VoiceFlow
+      - name: Build the DMG (universal)
+        run: scripts/release.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos
+          path: build/VoiceFlow-${{ needs.version.outputs.version }}-macOS.dmg
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+      - name: Unit tests
+        run: dotnet test windows/VoiceFlow.Core.Tests -c Release
+      - name: Publish x64 and arm64
+        shell: pwsh
+        run: |
+          $v = '${{ needs.version.outputs.version }}'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          foreach ($arch in 'x64', 'arm64') {
+            dotnet publish windows/VoiceFlow.Windows -c Release -r "win-$arch" --self-contained true `
+              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+              -o "out/win-$arch"
+            if ($LASTEXITCODE -ne 0) { throw "publish failed for $arch" }
+            Copy-Item "out/win-$arch/VoiceFlow.exe" "dist/VoiceFlow-$v-Windows-$arch.exe"
+          }
+      - name: Self-test (x64)
+        shell: pwsh
+        run: |
+          $v = '${{ needs.version.outputs.version }}'
+          $p = Start-Process "dist/VoiceFlow-$v-Windows-x64.exe" -ArgumentList '--self-test','--self-test-out','selftest.txt' -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { throw "Self-test failed with exit code $($p.ExitCode)" }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+  windows-arm64-test:
+    needs: [version, windows]
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows
+          path: dist
+      - name: Self-test (arm64)
+        shell: pwsh
+        run: |
+          $v = '${{ needs.version.outputs.version }}'
+          $p = Start-Process "dist/VoiceFlow-$v-Windows-arm64.exe" -ArgumentList '--self-test','--self-test-out','selftest.txt' -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { throw "Self-test failed with exit code $($p.ExitCode)" }
+
+  publish:
+    needs: [version, macos, windows, windows-arm64-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Build provenance (verify with `gh attestation verify <file> -R ${{ github.repository }}`)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.dmg
+            dist/*.exe
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "VoiceFlow ${{ needs.version.outputs.version }}" \
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md" \
+            --verify-tag

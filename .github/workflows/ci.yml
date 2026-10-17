@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    # The package needs Swift 6.2 (Xcode 26).
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Unit tests (offline; live Groq tests are skipped without a key)
+        run: swift test --package-path VoiceFlow
+
+      - name: Build the app bundle (universal, ad hoc signed)
+        run: UNIVERSAL=1 scripts/build-app.sh release
+
+      - name: Check the bundle
+        run: |
+          plutil -lint VoiceFlow/Support/Info.plist
+          codesign -d --entitlements - build/VoiceFlow.app 2>/dev/null | grep -q audio-input
+          lipo -archs build/VoiceFlow.app/Contents/MacOS/VoiceFlow
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Unit tests
+        run: dotnet test windows/VoiceFlow.Core.Tests -c Release
+
+      - name: Publish (x64)
+        run: >
+          dotnet publish windows/VoiceFlow.Windows -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+          -o out/win-x64
+
+      - name: Self-test on Windows
+        shell: pwsh
+        run: |
+          $p = Start-Process out/win-x64/VoiceFlow.exe -ArgumentList '--self-test','--self-test-out','selftest.txt' -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { throw "Self-test failed with exit code $($p.ExitCode)" }
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan for committed secrets
+        run: |
+          if git grep -nIE 'gsk_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}|sk-ant-[A-Za-z0-9-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY' -- . ':!*.md'; then
+            echo "Possible secret committed."; exit 1
+          fi
+
+      - name: Cleanup prompt is identical on macOS and Windows
+        run: python3 scripts/check_prompt_parity.py

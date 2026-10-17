@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>VoiceFlow.Windows</RootNamespace>
+    <AssemblyName>VoiceFlow</AssemblyName>
+    <ApplicationIcon>Assets\VoiceFlow.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- DPI awareness is declared in app.manifest (Per-Monitor V2) so it applies before any code runs. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <AssemblyTitle>VoiceFlow</AssemblyTitle>
+    <Description>Voice dictation for Windows: hold a hotkey, speak, and clean text is typed where you are.</Description>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Single-file publish settings (the flags are also passed on the command line in CI). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Audio capture (WASAPI microphone and loopback). MIT licensed. -->
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\VoiceFlow.Core\VoiceFlow.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\VoiceFlow.ico" LogicalName="VoiceFlow.ico" />
+  </ItemGroup>
+</Project>
