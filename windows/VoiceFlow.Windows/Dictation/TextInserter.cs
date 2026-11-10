@@ -24,7 +24,7 @@ internal enum InsertResult
 }
 
 /// <summary>How an insertion ended, with the reason code the debug report and history record.</summary>
-internal readonly record struct InsertOutcome(InsertResult Result, DeliveryReason Reason, string? Detail);
+internal readonly record struct InsertOutcome(InsertResult Result, DeliveryReason Reason, string? Detail, string? FieldBefore = null);
 
 /// <summary>
 /// Puts text where the user is typing: the clipboard is saved, the text goes on it marked to stay out of
@@ -79,6 +79,7 @@ internal sealed class TextInserter(ClipboardService clipboard)
             InputSender.CtrlA();
             await Task.Delay(60);
         }
+        else if (!context.IsTerminal) clean = OutputSafety.WithLeadingSpace(clean, await FocusInfo.BeforeCursorAsync(200));
         return await PasteCheckedAsync(clean, context.IsTerminal, before);
     }
 
@@ -100,12 +101,12 @@ internal sealed class TextInserter(ClipboardService clipboard)
         var sent = terminal ? InputSender.ShiftInsert() : InputSender.CtrlV();
         if (!sent) Logger.Warn("SendInput was blocked (UIPI or secure desktop)");
         // Verification runs inside the wait the clipboard needs anyway, so it adds no delay.
-        var check = sent && verify && !terminal ? VerifyAsync(text, before) : Task.FromResult(PasteCheck.Unknown);
+        var check = sent && verify && !terminal ? VerifyAsync(text.TrimStart(), before) : Task.FromResult(PasteCheck.Unknown);
         // Slow apps read the clipboard late; restoring too early would paste the old contents.
         await Task.WhenAll(check, Task.Delay(500));
         // Restore only if nothing else used the clipboard meanwhile.
         if (saved != null && ClipboardService.SequenceNumber == sequence) await clipboard.RestoreAsync(saved);
-        if (!sent) return new(InsertResult.Failed, DeliveryReason.Blocked, DeliveryDetail.InputRefused);
+        if (!sent) return new(InsertResult.Failed, DeliveryReason.Blocked, DeliveryDetail.InputRefused, before);
         var (reason, detail) = InsertionPolicy.ReasonFor(await check);
         var result = reason switch
         {
@@ -113,7 +114,7 @@ internal sealed class TextInserter(ClipboardService clipboard)
             DeliveryReason.PasteNotLanded => InsertResult.PasteNotLanded,
             _ => InsertResult.PastedUnverified,
         };
-        return new(result, reason, detail);
+        return new(result, reason, detail, before);
     }
 
     /// <summary>Reads the field back until the text shows up or the time runs out. Apps apply a paste asynchronously.</summary>

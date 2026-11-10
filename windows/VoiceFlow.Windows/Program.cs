@@ -1,3 +1,10 @@
+using Avalonia;
+using Avalonia.Media;
+using Avalonia.Threading;
+using VoiceFlow.Desktop;
+using VoiceFlow.Windows.Native;
+using VoiceFlow.Windows.Shell;
+
 namespace VoiceFlow.Windows;
 
 internal static class Program
@@ -6,19 +13,25 @@ internal static class Program
     const string MutexName = @"Local\VoiceFlow.SingleInstance.5f3c2a7e";
     const string ShowEventName = @"Local\VoiceFlow.Show.5f3c2a7e";
 
+    /// <summary>Nirmala UI has Telugu and Devanagari, which Segoe UI does not.</summary>
+    public static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure<App>()
+            .UseWin32()
+            .UseSkia()
+            .With(new FontManagerOptions { FontFallbacks = [new FontFallback { FontFamily = new FontFamily("Nirmala UI") }] })
+            .LogToTrace();
+
     [STAThread]
     static int Main(string[] args)
     {
         if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase)) return SelfTest.Run(args);
 
         Logger.Initialize(AppPaths.LogFolder);
-        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-        Application.ThreadException += (_, e) => OnUiException(e.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             // A background thread crashed; .NET will end the process. Log it and un-mute the speakers first.
             Logger.Error("Unhandled exception (process ending)", e.ExceptionObject as Exception);
-            TrayApp.Current?.EmergencyCleanup();
+            WindowsApp.Current?.EmergencyCleanup();
         };
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
@@ -37,8 +50,7 @@ internal static class Program
         {
             // A copy running as administrator created these objects; this unelevated copy may not open them.
             Logger.Error("Another VoiceFlow is running as administrator", e);
-            MessageBox.Show("VoiceFlow is already running as administrator. Quit that copy first.", "VoiceFlow",
-                            MessageBoxButtons.OK, MessageBoxIcon.Information);
+            NativeMethods.MessageBoxW(IntPtr.Zero, "VoiceFlow is already running as administrator. Quit that copy first.", "VoiceFlow", NativeMethods.MB_ICONINFORMATION);
             return 0;
         }
         using var mutexScope = mutex;
@@ -53,29 +65,32 @@ internal static class Program
             return 0;
         }
 
+        RegisteredWaitHandle? registration = null;
         try
         {
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);   // also declared in app.manifest
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
-
-            using var app = new TrayApp(background: args.Contains("--background", StringComparer.OrdinalIgnoreCase));
-            var registration = ThreadPool.RegisterWaitForSingleObject(showEvent, (_, _) => app.OnSecondInstance(), null, Timeout.Infinite, executeOnlyOnce: false);
-            Application.ApplicationExit += (_, _) => app.EmergencyCleanup();
-            Application.Run(app);
-            registration.Unregister(null);
+            var background = args.Contains("--background", StringComparer.OrdinalIgnoreCase);
+            App.Startup = desktop =>
+            {
+                Dispatcher.UIThread.UnhandledException += (_, e) =>
+                {
+                    e.Handled = true;
+                    OnUiException(e.Exception);
+                };
+                var app = new WindowsApp(desktop, background);
+                registration = ThreadPool.RegisterWaitForSingleObject(showEvent, (_, _) => Dispatcher.UIThread.Post(app.OnSecondInstance), null, Timeout.Infinite, executeOnlyOnce: false);
+            };
+            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
             return 0;
         }
         catch (Exception e)
         {
             Logger.Error("VoiceFlow could not start", e);
-            MessageBox.Show($"VoiceFlow could not start.\n\n{e.Message}\n\nDetails are in {Logger.FilePath}", "VoiceFlow",
-                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+            NativeMethods.MessageBoxW(IntPtr.Zero, $"VoiceFlow could not start.\n\n{e.Message}\n\nDetails are in {Logger.FilePath}", "VoiceFlow", NativeMethods.MB_ICONERROR);
             return 1;
         }
         finally
         {
+            registration?.Unregister(null);
             if (owner) mutex.ReleaseMutex();
         }
     }
@@ -89,9 +104,8 @@ internal static class Program
         if (Interlocked.Exchange(ref _reporting, 1) == 1) return;
         try
         {
-            TrayApp.Current?.EmergencyCleanup();
-            MessageBox.Show($"Something went wrong, but VoiceFlow is still running.\n\n{e.Message}\n\nDetails are in {Logger.FilePath}",
-                            "VoiceFlow", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            WindowsApp.Current?.EmergencyCleanup();
+            NativeMethods.MessageBoxW(IntPtr.Zero, $"Something went wrong, but VoiceFlow is still running.\n\n{e.Message}\n\nDetails are in {Logger.FilePath}", "VoiceFlow", NativeMethods.MB_ICONWARNING);
         }
         finally
         {

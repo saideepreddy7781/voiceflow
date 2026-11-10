@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Avalonia.Threading;
 using Microsoft.Win32;
 using VoiceFlow.Core;
 using VoiceFlow.Core.Input;
@@ -15,11 +16,10 @@ namespace VoiceFlow.Windows.Input;
 /// </summary>
 internal sealed class HotkeyMonitor : IDisposable
 {
-    readonly Control _poster;
     readonly KeyboardHook _hook;
     readonly HotkeyProcessor _processor;
-    readonly System.Windows.Forms.Timer _tickTimer = new();
-    readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 10 * 60 * 1000 };
+    readonly DispatcherTimer _tickTimer = new();
+    readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromMinutes(10) };
     readonly Action<GestureAction> _onGesture;
     readonly Action<HotkeyShortcut> _onShortcut;
     /// <summary>Guards <see cref="_processor"/>, used by the hook thread and the UI thread.</summary>
@@ -32,9 +32,8 @@ internal sealed class HotkeyMonitor : IDisposable
     /// <summary>Counts our own injected events seen by the hook (the self-test checks this).</summary>
     public int OwnInjectedSeen => Volatile.Read(ref _ownInjectedSeen);
 
-    public HotkeyMonitor(Control poster, Hotkey hotkey, Action<GestureAction> onGesture, Action<HotkeyShortcut> onShortcut)
+    public HotkeyMonitor(Hotkey hotkey, Action<GestureAction> onGesture, Action<HotkeyShortcut> onShortcut)
     {
-        _poster = poster;
         _onGesture = onGesture;
         _onShortcut = onShortcut;
         _processor = new HotkeyProcessor(hotkey, new GestureRecognizer(), vk => (GetAsyncKeyState(vk) & 0x8000) != 0);
@@ -169,7 +168,7 @@ internal sealed class HotkeyMonitor : IDisposable
             // V was swallowed, so Windows would see a bare Alt+Shift release (the input-language switch) and a bare
             // Alt (menu bar). A masked key while they are still down prevents both.
             InputSender.TapMaskKey();
-            _poster.BeginInvoke(() => _onShortcut(shortcut));
+            Dispatcher.UIThread.Post(() => _onShortcut(shortcut));
         }
         switch (result.Verdict)
         {
@@ -190,14 +189,14 @@ internal sealed class HotkeyMonitor : IDisposable
         {
             var a = action;
             // Logging happens in the posted work: the hook callback does no I/O.
-            _poster.BeginInvoke(() =>
+            Dispatcher.UIThread.Post(() =>
             {
                 Logger.Debug($"gesture {a}");
                 _onGesture(a);
             });
         }
-        if (_poster.InvokeRequired) _poster.BeginInvoke(ScheduleTick);
-        else ScheduleTick();
+        if (Dispatcher.UIThread.CheckAccess()) ScheduleTick();
+        else Dispatcher.UIThread.Post(ScheduleTick);
     }
 
     void ScheduleTick()
@@ -206,7 +205,7 @@ internal sealed class HotkeyMonitor : IDisposable
         double? next;
         lock (_gate) next = _processor.Recognizer.Deadline;
         if (next is not { } deadline) return;
-        _tickTimer.Interval = Math.Max(1, (int)Math.Ceiling((deadline - Now) * 1000) + 5);
+        _tickTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, Math.Ceiling((deadline - Now) * 1000) + 5));
         _tickTimer.Start();
     }
 
@@ -222,14 +221,14 @@ internal sealed class HotkeyMonitor : IDisposable
     void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)
     {
         if (e.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.ConsoleConnect or SessionSwitchReason.RemoteConnect)
-            _poster.BeginInvoke(() => { ResetSession(); Reinstall("session unlocked"); });
+            Dispatcher.UIThread.Post(() => { ResetSession(); Reinstall("session unlocked"); });
         else if (e.Reason == SessionSwitchReason.SessionLock)
-            _poster.BeginInvoke(() => ResetSession());
+            Dispatcher.UIThread.Post(() => ResetSession());
     }
 
     void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
     {
-        if (e.Mode == PowerModes.Resume) _poster.BeginInvoke(() => { ResetSession(); Reinstall("resumed"); });
+        if (e.Mode == PowerModes.Resume) Dispatcher.UIThread.Post(() => { ResetSession(); Reinstall("resumed"); });
     }
 
     public void Dispose()
@@ -237,7 +236,6 @@ internal sealed class HotkeyMonitor : IDisposable
         SystemEvents.SessionSwitch -= OnSessionSwitch;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         Stop();
-        _tickTimer.Dispose();
-        _refreshTimer.Dispose();
+        _tickTimer.Stop();
     }
 }

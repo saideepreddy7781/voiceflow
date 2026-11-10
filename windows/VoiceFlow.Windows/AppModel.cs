@@ -14,6 +14,7 @@ internal sealed class AppModel
     readonly JsonFile<List<DictionaryEntry>> _dictionaryFile;
     readonly JsonFile<List<Snippet>> _snippetsFile;
     readonly JsonFile<List<HistoryEntry>> _historyFile;
+    readonly JsonFile<List<Note>> _notesFile;
     readonly CredentialStore _secrets;
     readonly Dictionary<SecretKey, string> _cachedKeys = new();
     readonly HashSet<SecretKey> _storedKeys = new();
@@ -23,11 +24,13 @@ internal sealed class AppModel
     public List<DictionaryEntry> Dictionary { get; private set; }
     public List<Snippet> Snippets { get; private set; }
     public List<HistoryEntry> History { get; private set; }
+    public List<Note> Notes { get; private set; }
     public Dictionary<SecretKey, KeyCheckResult> KeyChecks { get; } = new();
 
     /// <summary>Old and new preferences, after the change is saved.</summary>
     public event Action<Preferences, Preferences>? PreferencesChanged;
     public event Action? LibraryChanged;
+    public event Action? NotesChanged;
     public event Action? KeysChanged;
 
     /// <param name="credentialPrefix">Credential Manager target prefix; the self-test uses its own so it never touches real keys.</param>
@@ -39,9 +42,11 @@ internal sealed class AppModel
         _dictionaryFile = new JsonFile<List<DictionaryEntry>>("dictionary.json", dataFolder);
         _snippetsFile = new JsonFile<List<Snippet>>("snippets.json", dataFolder);
         _historyFile = new JsonFile<List<HistoryEntry>>("history.json", dataFolder);
+        _notesFile = new JsonFile<List<Note>>("notes.json", dataFolder);
         Preferences = _preferenceStore.Load();
         Dictionary = _dictionaryFile.Load() ?? [];
         Snippets = _snippetsFile.Load() ?? [];
+        Notes = _notesFile.Load() ?? [];
         History = HistoryRetention.Apply(_historyFile.Load() ?? [], Preferences.HistoryRetentionDays);
         SaveHistory();
         RefreshStoredKeys();
@@ -86,6 +91,15 @@ internal sealed class AppModel
         LibraryChanged?.Invoke();
     }
 
+    public void ToggleHistoryFlag(Guid id)
+    {
+        var entry = History.FirstOrDefault(e => e.Id == id);
+        if (entry == null) return;
+        entry.Flagged = entry.Flagged != true;
+        SaveHistory();
+        LibraryChanged?.Invoke();
+    }
+
     public void ClearHistory()
     {
         History.Clear();
@@ -121,6 +135,25 @@ internal sealed class AppModel
         Dictionary.Insert(0, new DictionaryEntry(term.Trim(), m, source));
         SaveDictionary();
         return null;
+    }
+
+    /// <summary>Edits an entry. Returns an error message, or null when saved.</summary>
+    public string? UpdateDictionaryEntry(Guid id, string term, string? misspelling)
+    {
+        var entry = Dictionary.FirstOrDefault(e => e.Id == id);
+        if (entry == null) return null;
+        var m = string.IsNullOrWhiteSpace(misspelling) ? null : misspelling.Trim();
+        if (DictionaryEntry.Validate(term, m, Dictionary.Where(e => e.Id != id)) is { } error) return error;
+        entry.Term = term.Trim();
+        entry.Misspelling = m;
+        SaveDictionary();
+        return null;
+    }
+
+    /// <summary>Removes a word learned by mistake (the toast's Undo button).</summary>
+    public void RemoveDictionaryTerm(string term)
+    {
+        if (Dictionary.RemoveAll(e => e.Term == term && e.Source == DictionarySource.AutoLearned) > 0) SaveDictionary();
     }
 
     public void RemoveDictionaryEntries(IEnumerable<Guid> ids)
@@ -165,6 +198,26 @@ internal sealed class AppModel
         Save(() => _snippetsFile.Save(Snippets), "snippets");
         LibraryChanged?.Invoke();
     }
+
+    // MARK: Scratchpad
+
+    public Note CreateNote()
+    {
+        var note = new Note();
+        Notes.Insert(0, note);
+        SaveNotes();
+        NotesChanged?.Invoke();
+        return note;
+    }
+
+    public void DeleteNote(Guid id)
+    {
+        if (Notes.RemoveAll(n => n.Id == id) == 0) return;
+        SaveNotes();
+        NotesChanged?.Invoke();
+    }
+
+    public void SaveNotes() => Save(() => _notesFile.Save(Notes), "notes");
 
     static void Save(Action write, string what)
     {

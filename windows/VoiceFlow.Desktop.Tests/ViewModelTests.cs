@@ -291,4 +291,131 @@ public class ViewModelTests
         foreach (var entry in services.History.Entries.Take(5))
             Assert.DoesNotContain(entry.Final, report);
     }
+
+    // Integration additions
+
+    [Fact]
+    public void FlowBarSitsAtBottomCentreOfTheWorkArea()
+    {
+        var work = new Avalonia.PixelRect(1920, 0, 2560, 1400);
+        var position = Views.FlowBarWindow.BottomCentre(work, new Avalonia.PixelSize(200, 80), 1.5);
+        Assert.Equal(1920 + (2560 - 200) / 2, position.X);
+        Assert.Equal(1400 - 80 - 9, position.Y);   // margin 6 at 150%
+    }
+
+    [Fact]
+    public void RestingBarIsHiddenUnlessTheSettingIsOn()
+    {
+        var d = new DemoDictation();
+        var view = new FlowBarViewModel(new ServicesWithDictation(Services(), d), runClock: false);
+        Assert.False(view.ShowIdlePill);
+        d.ShowWhenIdle = true;
+        d.Set(FlowPhase.Idle);
+        Assert.True(view.ShowIdlePill);
+        d.Set(FlowPhase.Listening);
+        Assert.False(view.ShowIdlePill);
+    }
+
+    [Fact]
+    public void HomeShowsAnUpdateNotice()
+    {
+        var services = Services();
+        var vm = new HomeViewModel(services, Now, () => { });
+        Assert.False(vm.HasUpdate);
+        services.DemoUpdates.SetAvailable("9.0.0");
+        Assert.True(vm.HasUpdate);
+        Assert.Contains("9.0.0", vm.UpdateNotice, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AboutOffersTheReleaseWhenOneIsAvailable()
+    {
+        var services = Services();
+        var about = new SettingsViewModel(services, () => { }).About;
+        Assert.False(about.UpdateAvailable);
+        services.DemoUpdates.SetAvailable("9.0.0");
+        Assert.True(about.UpdateAvailable);
+        Assert.Contains("9.0.0", about.UpdateText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheUpdateSettingCanBeTurnedOff()
+    {
+        var services = Services();
+        var about = new SettingsViewModel(services, () => { }).About;
+        Assert.True(about.CheckForUpdates);
+        about.CheckForUpdates = false;
+        Assert.False(services.Preferences.Current.CheckForUpdates);
+    }
+
+    [Fact]
+    public void GreetingFollowsTheClockAfterReload()
+    {
+        var now = new DateTimeOffset(2026, 11, 10, 8, 0, 0, TimeSpan.FromHours(5.5));
+        var vm = new HomeViewModel(Services(), () => now, () => { });
+        var morning = vm.Greeting;
+        now = now.AddHours(11);
+        vm.Reload();
+        Assert.NotEqual(morning, vm.Greeting);
+    }
+
+    [Fact]
+    public void MeetingPaneShowsNotesOnceTheyAreWritten()
+    {
+        var services = Services();
+        var vm = new MeetingsViewModel(services, _ => { });
+        var pane = Assert.IsType<MeetingDetailViewModel>(vm.Pane);
+        pane.ShowTranscript = true;
+        var meeting = pane.Meeting;
+
+        meeting.Notes = new MeetingNotes { Summary = ["Freshly written."] };
+        services.Meetings.Rename(meeting.Id, meeting.Title);   // raises Changed, as saving does in the real app
+
+        var updated = Assert.IsType<MeetingDetailViewModel>(vm.Pane);
+        Assert.NotSame(pane, updated);
+        Assert.Equal(["Freshly written."], updated.Summary);
+        Assert.True(updated.ShowTranscript);
+    }
+
+    [Fact]
+    public async Task MeetingPaneStaysPutWhenNothingChanged()
+    {
+        var services = Services();
+        var vm = new MeetingsViewModel(services, _ => { });
+        var pane = vm.Pane;
+        await services.Meetings.RewriteNotesAsync(Guid.NewGuid());
+        services.Meetings.Rename(((MeetingDetailViewModel)pane!).Meeting.Id, "Same meeting, new title");
+        Assert.Same(pane, vm.Pane);
+    }
+
+    [Fact]
+    public async Task LiveTranscriptGrowsAsChunksArrive()
+    {
+        var services = Services();
+        await services.Meetings.StartAsync();
+        using var live = new LiveMeetingViewModel(services);
+        var before = live.Lines.Count;
+
+        services.Meetings.Live!.Lines.Add(new TranscriptLine(90, Speaker.You, "One more thing."));
+        await services.Meetings.StartAsync();   // raises Changed, as each saved chunk does in the real app
+
+        Assert.Equal(before + 1, live.Lines.Count);
+    }
+
+    sealed class ServicesWithDictation(DemoServices inner, IDictationService dictation) : IAppServices
+    {
+        public ISetupService Setup => inner.Setup;
+        public IHistoryService History => inner.History;
+        public IMeetingsService Meetings => inner.Meetings;
+        public IDictionaryService Dictionary => inner.Dictionary;
+        public ISnippetsService Snippets => inner.Snippets;
+        public IScratchpadService Scratchpad => inner.Scratchpad;
+        public IPreferencesService Preferences => inner.Preferences;
+        public IMicrophoneService Microphone => inner.Microphone;
+        public IKeyService Keys => inner.Keys;
+        public IDictationService Dictation => dictation;
+        public IShellService Shell => inner.Shell;
+        public IUpdateService Updates => inner.Updates;
+        public IDiagnosticsService Diagnostics => inner.Diagnostics;
+    }
 }

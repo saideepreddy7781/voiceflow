@@ -1,5 +1,12 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Threading;
 using VoiceFlow.Core;
 using VoiceFlow.Core.AI;
 using VoiceFlow.Core.Audio;
@@ -12,8 +19,11 @@ using VoiceFlow.Windows.Dictation;
 using VoiceFlow.Windows.Input;
 using VoiceFlow.Windows.Meetings;
 using VoiceFlow.Windows.Native;
-using VoiceFlow.Windows.UI;
+using VoiceFlow.Desktop.ViewModels;
+using VoiceFlow.Desktop.Views;
+using VoiceFlow.Windows.Shell;
 using static VoiceFlow.Windows.Native.NativeMethods;
+using Page = VoiceFlow.Desktop.ViewModels.Page;
 
 namespace VoiceFlow.Windows;
 
@@ -21,7 +31,8 @@ namespace VoiceFlow.Windows;
 /// <c>VoiceFlow.exe --self-test [--self-test-out path]</c>: checks the Windows-specific pieces on a real Windows
 /// machine (CI runners) without showing UI or touching the user's data or keys. One line per check:
 /// <c>PASS name: detail</c>, <c>SKIP name: reason</c> or <c>FAIL name: reason</c>. Exit code 0 when nothing
-/// failed, 1 otherwise.
+/// failed, 1 otherwise. It runs the real Avalonia shell off-screen, so CI exercises the exe that ships, and leaves no
+/// window or tray icon behind.
 ///
 /// Output goes to the file given with --self-test-out (the reliable way for a GUI-subsystem exe) and to standard
 /// output when a parent process redirected it or has a console to attach to.
@@ -43,21 +54,29 @@ internal static class SelfTest
             _file = new StreamWriter(path, append: false, new UTF8Encoding(false)) { AutoFlush = true };
         }
         _console = OpenConsole();
-        // Async helpers below are pumped by hand; a UI synchronization context would deadlock them.
-        WindowsFormsSynchronizationContext.AutoInstall = false;
-        SynchronizationContext.SetSynchronizationContext(null);
-
-        Emit($"VoiceFlow {Application.ProductVersion} self-test on {RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture})");
+        var version = typeof(SelfTest).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+        Emit($"VoiceFlow {version} self-test on {RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture})");
         var temp = Path.Combine(Path.GetTempPath(), "VoiceFlow-selftest-" + Guid.NewGuid().ToString("N"));
         try
         {
+            // Avalonia first: the hotkey monitor and the Flow bar need its dispatcher, and this is the check that the
+            // published single-file exe can start the UI at all.
+            var uiReady = false;
+            Check("avalonia-start", () =>
+            {
+                Program.BuildAvaloniaApp().SetupWithoutStarting();
+                // Async helpers below are pumped by hand; a UI synchronization context would deadlock them.
+                SynchronizationContext.SetSynchronizationContext(null);
+                uiReady = true;
+                return "Win32 and Skia initialized";
+            });
             Check("struct-layout", StructLayout);
             Check("prompt", Prompt);
             Check("data-folder", () => DataFolder(temp));
             Check("credential-manager", CredentialManager);
             Check("multipart", Multipart);
             Check("sounds", SoundsCheck);
-            using var owner = new HiddenOwner();
+            using var owner = new MessageWindow();
             Check("clipboard", () => ClipboardRoundTrip(owner.Handle));
             Check("keyboard-hook", KeyboardHookCheck);
             Check("hotkey-thread", HotkeyThreadCheck);
@@ -68,7 +87,12 @@ internal static class SelfTest
             Check("real-microphone", RealMicrophoneCheck);
             Check("field-reading", FieldReadingCheck);
             Check("debug-report", () => DebugReportCheck(temp));
-            Check("ui", () => UiCheck(temp));
+            if (uiReady)
+            {
+                Check("resources", ResourcesCheck);
+                Check("flow-bar-window", () => FlowBarWindowCheck(temp));
+                Check("ui", () => UiCheck(temp));
+            }
         }
         finally
         {
@@ -134,10 +158,31 @@ internal static class SelfTest
         while (!task.IsCompleted)
         {
             if (DateTime.UtcNow > until) throw new TimeoutException("timed out");
-            Application.DoEvents();
+            PumpMessages();
             Thread.Sleep(5);
         }
         return task.GetAwaiter().GetResult();
+    }
+
+    /// <summary>Delivers pending Win32 messages and Avalonia work on this thread.</summary>
+    static void PumpMessages()
+    {
+        while (PeekMessageW(out var msg, IntPtr.Zero, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(ref msg);
+            DispatchMessageW(ref msg);
+        }
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    static void PumpFor(TimeSpan time)
+    {
+        var until = DateTime.UtcNow + time;
+        while (DateTime.UtcNow < until)
+        {
+            PumpMessages();
+            Thread.Sleep(5);
+        }
     }
 
     static bool HasInteractiveDesktop()
@@ -264,7 +309,7 @@ internal static class SelfTest
         var until = DateTime.UtcNow.AddSeconds(2);
         while (ownSeen < 2 && DateTime.UtcNow < until)
         {
-            Application.DoEvents();
+            PumpMessages();
             Thread.Sleep(5);
         }
         hook.Uninstall();
@@ -277,10 +322,8 @@ internal static class SelfTest
     /// <summary>The real hotkey monitor: hook on its own thread, our injected key seen there and ignored, clean shutdown.</summary>
     static string HotkeyThreadCheck()
     {
-        using var poster = new Control();
-        poster.CreateControl();
         int gestures = 0;
-        var monitor = new HotkeyMonitor(poster, Hotkey.CtrlWin, _ => gestures++, _ => gestures++);
+        var monitor = new HotkeyMonitor(Hotkey.CtrlWin, _ => gestures++, _ => gestures++);
         try
         {
             monitor.Start();
@@ -291,7 +334,7 @@ internal static class SelfTest
             var until = DateTime.UtcNow.AddSeconds(2);
             while (monitor.OwnInjectedSeen < 2 && DateTime.UtcNow < until) Thread.Sleep(5);
             if (monitor.OwnInjectedSeen == 0) throw new SkipException("the injected key never reached the hook (input may be blocked on this desktop)");
-            Application.DoEvents();
+            PumpMessages();
             Assert(gestures == 0, "an injected key produced a gesture");
             return $"hook ran on its own thread while the UI thread was blocked, saw {monitor.OwnInjectedSeen} own events, ignored them";
         }
@@ -302,33 +345,49 @@ internal static class SelfTest
         }
     }
 
-    /// <summary>Checks the hand-declared IUIAutomation vtable against VoiceFlow's own password and text boxes.</summary>
+    /// <summary>A plain Win32 edit box, never shown. The caller destroys it.</summary>
+    static IntPtr NativeEdit(string text, bool password)
+    {
+        var hwnd = CreateWindowExW(0, "EDIT", text, WS_POPUP | (password ? ES_PASSWORD : 0), 0, 0, 200, 30, IntPtr.Zero, IntPtr.Zero, GetModuleHandleW(null), IntPtr.Zero);
+        if (hwnd == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        return hwnd;
+    }
+
+    /// <summary>Checks the hand-declared IUIAutomation vtables against real Win32 password and edit boxes.</summary>
     static string UiAutomationCheck()
     {
-        using var form = new Form { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-32000, -32000) };
-        var password = new TextBox { UseSystemPasswordChar = true, Text = "hidden" };
-        var plain = new TextBox { Text = "VoiceFlow UIA check", Top = 30 };
-        form.Controls.Add(password);
-        form.Controls.Add(plain);
-        _ = form.Handle;
-        var passwordHandle = password.Handle;
-        var plainHandle = plain.Handle;
-        (bool, string?) secret, text;
+        var password = NativeEdit("hidden", password: true);
+        var plain = NativeEdit("VoiceFlow UIA check", password: false);
         try
         {
-            // UI Automation must not be called from the thread that owns the windows; this thread keeps pumping.
-            secret = Pump(() => Task.Run(() => UIAutomation.FromHandle(passwordHandle, readValue: true)), TimeSpan.FromSeconds(10));
-            text = Pump(() => Task.Run(() => UIAutomation.FromHandle(plainHandle, readValue: true)), TimeSpan.FromSeconds(10));
+            (bool, string?) secret, text;
+            string before;
+            try
+            {
+                // UI Automation must not be called from the thread that owns the windows; this thread keeps pumping.
+                secret = Pump(() => Task.Run(() => UIAutomation.FromHandle(password, readValue: true)), TimeSpan.FromSeconds(10));
+                text = Pump(() => Task.Run(() => UIAutomation.FromHandle(plain, readValue: true)), TimeSpan.FromSeconds(10));
+                SendMessageW(plain, EM_SETSEL, new IntPtr(9), new IntPtr(9));   // caret after "VoiceFlow"
+                before = Pump(() => Task.Run(() => UIAutomation.TextBeforeCursorOf(plain, 120)), TimeSpan.FromSeconds(10));
+                var passwordBefore = Pump(() => Task.Run(() => UIAutomation.TextBeforeCursorOf(password, 120)), TimeSpan.FromSeconds(10));
+                Assert(passwordBefore.Length == 0, "text before the caret was read from a password box");
+            }
+            catch (COMException e)
+            {
+                throw new SkipException($"UI Automation unavailable (0x{e.HResult:X8})");
+            }
+            Assert(secret.Item1, "a password box was not reported as a password field");
+            Assert(secret.Item2 == null, "a password box value was read");
+            Assert(!text.Item1, "a plain text box was reported as a password field");
+            Assert(text.Item2 == "VoiceFlow UIA check", $"read \"{text.Item2}\" from a text box");
+            Assert(before == "VoiceFlow", $"read \"{before}\" before the caret");
+            return "password box detected, plain edit value and text before the caret read";
         }
-        catch (COMException e)
+        finally
         {
-            throw new SkipException($"UI Automation unavailable (0x{e.HResult:X8})");
+            DestroyWindow(password);
+            DestroyWindow(plain);
         }
-        Assert(secret.Item1, "a password box was not reported as a password field");
-        Assert(secret.Item2 == null, "a password box value was read");
-        Assert(!text.Item1, "a plain text box was reported as a password field");
-        Assert(text.Item2 == "VoiceFlow UIA check", $"read \"{text.Item2}\" from a text box");
-        return "password box detected, plain text box value read";
     }
 
     static string AudioDevicesCheck()
@@ -444,41 +503,116 @@ internal static class SelfTest
         return $"{report.Length}-character report with reason codes and no dictated text";
     }
 
-    static string UiCheck(string temp)
+    /// <summary>Everything the published exe needs from inside itself: icon resources, compiled XAML, native Skia and fonts.</summary>
+    static string ResourcesCheck()
     {
-        var folder = Path.Combine(temp, "ui");
+        using var embedded = typeof(SelfTest).Assembly.GetManifestResourceStream("VoiceFlow.ico");
+        Assert(embedded is { Length: > 0 }, "the tray icon is not embedded in the exe");
+        Assert(WindowsApp.LoadIcon() != null, "the tray icon did not load");
+        using (var asset = AssetLoader.Open(new Uri("avares://VoiceFlow.Desktop/Assets/VoiceFlow.ico")))
+            Assert(asset.Length > 0, "the window icon asset is empty");
+        Assert(Application.Current?.Resources.ContainsKey("FontText") == true || Application.Current?.TryFindResource("FontText", out _) == true, "theme resources did not load");
+
+        // Rendering proves libSkiaSharp and libHarfBuzzSharp were found, wherever the single-file host put them.
+        var text = new TextBlock { Text = "నమస్తే नमस्ते VoiceFlow", FontSize = 18, FontFamily = new FontFamily("Segoe UI, Nirmala UI") };
+        text.Measure(Size.Infinity);
+        text.Arrange(new Rect(text.DesiredSize));
+        using var bitmap = new RenderTargetBitmap(new PixelSize(320, 48));
+        bitmap.Render(text);
+
+        var nirmala = FontManager.Current.SystemFonts.Any(f => f.Name == "Nirmala UI");
+        var bundled = File.Exists(Path.Combine(AppContext.BaseDirectory, "VoiceFlow.dll")) ? "loose files" : "single-file bundle";
+        return $"{bundled}: icons and theme found, text rendered; Nirmala UI {(nirmala ? "present" : "not installed on this machine")}";
+    }
+
+    static (AppModel Model, SharedMicrophone Hub, DictationController Dictation, Notetaker Notetaker, FlowBarController Bar, AppServices Services, MessageWindow Owner) Compose(string folder)
+    {
         Directory.CreateDirectory(folder);
-        SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
-        try
+        var model = new AppModel(folder, credentialPrefix: $"VoiceFlow-selftest-{Guid.NewGuid():N}/");
+        var hub = new SharedMicrophone(new SimulatedMicrophoneSource(), new SharedMicrophoneOptions { PollInterval = null });
+        var bar = new FlowBarController();
+        var notetaker = new Notetaker(model, bar, hub);
+        var owner = new MessageWindow();
+        var inserter = new TextInserter(new ClipboardService(owner.Handle));
+        var dictation = new DictationController(model, bar, inserter, new OutputMuter(folder), hub);
+        return (model, hub, dictation, notetaker, bar, new AppServices(model, dictation, notetaker, bar, inserter, hub), owner);
+    }
+
+    /// <summary>The real Flow bar window: its native styles, and that it appears only when there is something to show.</summary>
+    static string FlowBarWindowCheck(string temp)
+    {
+        var (_, hub, dictation, notetaker, bar, services, owner) = Compose(Path.Combine(temp, "bar"));
+        using (hub) using (dictation) using (notetaker) using (bar) using (owner)
+        using (var host = new FlowBarHost(bar, new FlowBarViewModel(services, runClock: false)))
         {
-            var model = new AppModel(folder, credentialPrefix: $"VoiceFlow-selftest-{Guid.NewGuid():N}/");
-            using var bar = new FlowBarController();
-            bar.RenderOffscreen();
-            using var notetaker = new Notetaker(model, bar);
-            using var owner = new HiddenOwner();
-            var inserter = new Dictation.TextInserter(new ClipboardService(owner.Handle));
-            using var dictation = new Dictation.DictationController(model, bar, inserter, new OutputMuter(folder));
-            using var window = new MainWindow(model, notetaker, inserter, null)
-            {
-                StartPosition = FormStartPosition.Manual, Location = new Point(-32000, -32000), ShowInTaskbar = false,
-            };
-            _ = window.Handle;
-            foreach (var page in Enum.GetValues<PageId>()) window.ShowPage(page);
-            using var onboarding = new OnboardingForm(model, null);
-            _ = onboarding.Handle;
-            window.HideOnClose = false;
-            return "main window (all pages), onboarding, Flow bar and toast built off-screen and disposed";
-        }
-        finally
-        {
-            SynchronizationContext.SetSynchronizationContext(null);
+            Assert(host.Handle != IntPtr.Zero, "the Flow bar has no native handle");
+            var style = GetWindowLongPtrW(host.Handle, GWL_EXSTYLE).ToInt64();
+            Assert((style & WS_EX_NOACTIVATE) != 0, "WS_EX_NOACTIVATE is not set");
+            Assert((style & WS_EX_TOOLWINDOW) != 0, "WS_EX_TOOLWINDOW is not set");
+            Assert((style & WS_EX_TRANSPARENT) != 0, "the bar is not click-through at rest");
+            Assert(!IsWindowVisible(host.Handle), "the bar is on screen while idle");
+            bar.Show("Self-test", seconds: 30);
+            PumpFor(TimeSpan.FromMilliseconds(200));
+            Assert(IsWindowVisible(host.Handle), "a toast did not show the bar");
+            Assert((GetWindowLongPtrW(host.Handle, GWL_EXSTYLE).ToInt64() & WS_EX_NOACTIVATE) != 0, "showing the bar dropped WS_EX_NOACTIVATE");
+            bar.DismissToast();
+            PumpFor(TimeSpan.FromMilliseconds(100));
+            Assert(!IsWindowVisible(host.Handle), "the bar stayed on screen after its toast");
+            return $"extended styles 0x{style:X8}; hidden at rest, shown by a toast, hidden again";
         }
     }
 
-    /// <summary>A hidden top-level window used as clipboard owner.</summary>
-    sealed class HiddenOwner : NativeWindow, IDisposable
+    /// <summary>Builds every page and window of the real shell off-screen, then closes them.</summary>
+    static string UiCheck(string temp)
     {
-        public HiddenOwner() => CreateHandle(new CreateParams { Caption = "VoiceFlow self-test" });
-        public void Dispose() => DestroyHandle();
+        var (_, hub, dictation, notetaker, bar, services, owner) = Compose(Path.Combine(temp, "ui"));
+        using (hub) using (dictation) using (notetaker) using (bar) using (owner)
+        {
+            var shell = new ShellViewModel(services);
+            var window = new MainWindow { DataContext = shell, ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual };
+            window.Position = new PixelPoint(-32000, -32000);
+            try
+            {
+                window.Show();
+                PumpFor(TimeSpan.FromMilliseconds(150));
+                foreach (var page in Enum.GetValues<Page>())
+                {
+                    shell.Navigate(page);
+                    PumpFor(TimeSpan.FromMilliseconds(80));
+                    Assert(shell.Current != null, $"page {page} has no view model");
+                }
+                shell.Navigate(Page.Settings);
+                foreach (var section in shell.Settings.Sections)
+                {
+                    section.IsSelected = true;
+                    PumpFor(TimeSpan.FromMilliseconds(40));
+                }
+            }
+            finally
+            {
+                window.HideOnClose = false;
+                window.Close();
+                PumpFor(TimeSpan.FromMilliseconds(50));
+            }
+
+            var onboardingVm = new OnboardingViewModel(services, () => { });
+            var onboarding = new OnboardingWindow { DataContext = onboardingVm, ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual };
+            onboarding.Position = new PixelPoint(-32000, -32000);
+            try
+            {
+                onboarding.Show();
+                for (int step = 0; step < onboardingVm.Steps.Count; step++)
+                {
+                    onboardingVm.Step = step;
+                    PumpFor(TimeSpan.FromMilliseconds(40));
+                }
+            }
+            finally
+            {
+                onboarding.Close();
+                PumpFor(TimeSpan.FromMilliseconds(50));
+            }
+            return "main window with every page and settings section, and every onboarding step, built off-screen and closed";
+        }
     }
 }

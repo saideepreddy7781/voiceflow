@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using VoiceFlow.Core;
 using VoiceFlow.Core.AI;
 using VoiceFlow.Core.Audio;
@@ -5,7 +6,7 @@ using VoiceFlow.Core.Diagnostics;
 using VoiceFlow.Core.Meetings;
 using VoiceFlow.Windows.Audio;
 using VoiceFlow.Windows.Dictation;
-using VoiceFlow.Windows.UI;
+using VoiceFlow.Windows.Shell;
 
 namespace VoiceFlow.Windows.Meetings;
 
@@ -23,7 +24,7 @@ internal sealed class Notetaker : IDisposable
     readonly JsonFile<List<Meeting>> _store;
     readonly SharedMicrophone _microphone;
     readonly DeliveryLog _deliveries;
-    readonly System.Windows.Forms.Timer _tick = new() { Interval = 1000 };
+    readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(1) };
     readonly Action<MicHealthSnapshot> _onMicHealth;
     bool _warnedSilentSystem;
     bool _warnedSilentMic;
@@ -71,9 +72,8 @@ internal sealed class Notetaker : IDisposable
             () => new CaptureMeetingSource(null, loopback: true),
             logError: message => Logger.Error(message));
         // Updates are raised from the upload chain; state is only touched on the UI thread.
-        var ui = SynchronizationContext.Current ?? throw new InvalidOperationException("Notetaker must be created on the UI thread.");
-        _recorder.Updated += meeting => ui.Post(_ => OnUpdate(meeting), null);
-        _onMicHealth = health => ui.Post(_ => OnMicHealth(health), null);
+        _recorder.Updated += meeting => Dispatcher.UIThread.Post(() => OnUpdate(meeting));
+        _onMicHealth = health => Dispatcher.UIThread.Post(() => OnMicHealth(health));
         _microphone.HealthChanged += _onMicHealth;
         _tick.Tick += (_, _) => Tick();
     }
@@ -121,7 +121,8 @@ internal sealed class Notetaker : IDisposable
 
     // MARK: Recording
 
-    public void Start()
+    /// <param name="app">The meeting app when it was detected, for the notes; empty otherwise.</param>
+    public void Start(string app = "")
     {
         if (Current != State.Idle) return;
         if (_model.GetKey() is not { } key)
@@ -136,7 +137,7 @@ internal sealed class Notetaker : IDisposable
             prefs.InputDeviceId.Length == 0 ? null : prefs.InputDeviceId, prefs.MeetingsSystemAudio);
         try
         {
-            _recorder.Start("Meeting", "", [], settings);
+            _recorder.Start("Meeting", app, [], settings);
         }
         catch (Exception e) when (e is AudioCaptureException or InvalidOperationException)
         {
@@ -171,7 +172,6 @@ internal sealed class Notetaker : IDisposable
                       "VoiceFlow records what plays on your default speakers or headset. Check that the call plays there. Your microphone is still recorded.",
                       seconds: 12);
         }
-        Changed?.Invoke();
     }
 
     void OnUpdate(Meeting meeting)
@@ -282,6 +282,25 @@ internal sealed class Notetaker : IDisposable
         Save();
     }
 
+    public void RenameSpeaker(Guid id, Speaker speaker, string name)
+    {
+        var meeting = Meetings.FirstOrDefault(m => m.Id == id);
+        if (meeting == null || name.Trim().Length == 0) return;
+        meeting.SpeakerNames[speaker] = name.Trim();
+        SaveToFolder(meeting);
+        Save();
+    }
+
+    public void ToggleActionItem(Guid id, Guid itemId)
+    {
+        var meeting = Meetings.FirstOrDefault(m => m.Id == id);
+        var item = meeting?.Notes?.ActionItems.FirstOrDefault(a => a.Id == itemId);
+        if (meeting == null || item == null) return;
+        item.Done = !item.Done;
+        SaveToFolder(meeting);
+        Save();
+    }
+
     public void Delete(Guid id)
     {
         Meetings.RemoveAll(m => m.Id == id);
@@ -319,6 +338,6 @@ internal sealed class Notetaker : IDisposable
     {
         Abort();
         _microphone.HealthChanged -= _onMicHealth;
-        _tick.Dispose();
+        _tick.Stop();
     }
 }

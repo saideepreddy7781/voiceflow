@@ -70,6 +70,9 @@ internal static class FocusInfo
         return sb.ToString();
     }
 
+    /// <summary>The process's file name (for example zoom.exe), or "" when it cannot be read.</summary>
+    public static string ProcessFileName(uint pid) => Path.GetFileName(ProcessPath(pid) ?? "");
+
     static string? ProcessPath(uint pid)
     {
         var handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
@@ -188,6 +191,49 @@ internal static class FocusInfo
         // The worker may still be waiting on the app; a late result has nothing to report to.
         _ = work.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
         return new FieldReading(expectedWindow != IntPtr.Zero && IsHungAppWindow(expectedWindow) ? FieldState.Unresponsive : FieldState.Unknown, null);
+    }
+
+    /// <summary>
+    /// Text just before the caret in the focused field, for cleanup and spacing. "" when the field has no text
+    /// pattern, is a password field, or does not answer in time.
+    /// </summary>
+    public static async Task<string> BeforeCursorAsync(int timeoutMs = 250)
+    {
+        var work = Task.Run(() =>
+        {
+            try { return UIAutomation.TextBeforeCursor(120); }
+            catch (Exception e) when (e is not OutOfMemoryException) { return ""; }
+        });
+        var finished = await Task.WhenAny(work, Task.Delay(timeoutMs));
+        if (finished == work) return work.Result;
+        _ = work.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        return "";
+    }
+
+    /// <summary>Holds on to the focused field so auto-learn can read that same field again later.</summary>
+    public static async Task<UIAutomation.FieldHandle?> CaptureFieldAsync(int timeoutMs = 400)
+    {
+        var work = Task.Run(() =>
+        {
+            try { return UIAutomation.CaptureFocused(); }
+            catch (Exception e) when (e is not OutOfMemoryException) { return null; }
+        });
+        var finished = await Task.WhenAny(work, Task.Delay(timeoutMs));
+        if (finished == work) return work.Result;
+        _ = work.ContinueWith(t => t.Result?.Dispose(), TaskContinuationOptions.OnlyOnRanToCompletion);
+        return null;
+    }
+
+    /// <summary>Reads a held field. Null when it is gone or does not answer in time; never throws.</summary>
+    public static async Task<string?> ReadHeldFieldAsync(UIAutomation.FieldHandle field, int timeoutMs = 800)
+    {
+        var work = Task.Run(() =>
+        {
+            try { return field.ReadValue(); }
+            catch (Exception e) when (e is not OutOfMemoryException) { return null; }
+        });
+        var finished = await Task.WhenAny(work, Task.Delay(timeoutMs));
+        return finished == work ? work.Result : null;
     }
 
     /// <summary>The focused field's whole value (Command Mode context), or "" when it cannot be read in time.</summary>

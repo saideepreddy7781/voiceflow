@@ -165,24 +165,8 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
-    public const uint GA_ROOTOWNER = 3;
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
-
-    public static readonly IntPtr HWND_TOPMOST = new(-1);
-    public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040;
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    public const int SW_HIDE = 0, SW_SHOWNOACTIVATE = 4, SW_RESTORE = 9;
-
-    public const int WM_MOUSEACTIVATE = 0x0021, MA_NOACTIVATE = 3, WM_DPICHANGED = 0x02E0;
-    public const int WS_EX_TOPMOST = 0x00000008, WS_EX_TOOLWINDOW = 0x00000080, WS_EX_LAYERED = 0x00080000, WS_EX_NOACTIVATE = 0x08000000;
+    public const int WM_MOUSEACTIVATE = 0x0021, MA_NOACTIVATE = 3;
+    public const int WS_EX_TRANSPARENT = 0x00000020, WS_EX_TOOLWINDOW = 0x00000080, WS_EX_LAYERED = 0x00080000, WS_EX_NOACTIVATE = 0x08000000;
 
     public delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint idEventThread, uint dwmsEventTime);
 
@@ -297,57 +281,99 @@ internal static partial class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern UIntPtr GlobalSize(IntPtr hMem);
 
-    // MARK: Layered windows and monitors
+    // MARK: Monitors and the Flow bar window
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT { public int X; public int Y; }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct SIZE { public int CX; public int CY; }
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct BLENDFUNCTION
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
     {
-        public byte BlendOp;
-        public byte BlendFlags;
-        public byte SourceConstantAlpha;
-        public byte AlphaFormat;
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
     }
-
-    public const byte AC_SRC_OVER = 0x00, AC_SRC_ALPHA = 0x01;
-    public const int ULW_ALPHA = 0x02;
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc,
-                                                  ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetDC(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-    [DllImport("gdi32.dll")]
-    public static extern IntPtr CreateCompatibleDC(IntPtr hDC);
-
-    [DllImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool DeleteDC(IntPtr hdc);
-
-    [DllImport("gdi32.dll")]
-    public static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
-
-    [DllImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool DeleteObject(IntPtr hObject);
 
     [DllImport("user32.dll")]
     public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MONITORINFO lpmi);
+
     public const uint MONITOR_DEFAULTTONEAREST = 2;
 
     [DllImport("shcore.dll")]
     public static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+    public const int MDT_EFFECTIVE_DPI = 0;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCursorPos(out POINT lpPoint);
+
+    public const int GWL_EXSTYLE = -20;
+    public const uint LWA_ALPHA = 2;
+
+    // The Ptr functions exist only on 64-bit Windows, the only targets VoiceFlow ships for.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    /// <summary>Reads a window title without sending it a message, so a hung window cannot block the caller.</summary>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int InternalGetWindowText(IntPtr hWnd, StringBuilder pString, int cchMaxCount);
+
+    // MARK: Plain windows
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr CreateWindowExW(int dwExStyle, string lpClassName, string lpWindowName, int dwStyle, int x, int y, int nWidth, int nHeight,
+                                                IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DestroyWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    public static readonly IntPtr HWND_MESSAGE = new(-3);
+    public const int WS_POPUP = unchecked((int)0x80000000), ES_PASSWORD = 0x0020;
+    public const uint EM_SETSEL = 0x00B1;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int MessageBoxW(IntPtr hWnd, string lpText, string lpCaption, uint uType);
+    public const uint MB_ICONERROR = 0x10, MB_ICONWARNING = 0x30, MB_ICONINFORMATION = 0x40;
+
+    // Message pump for the self-test.
+    public const uint PM_REMOVE = 0x0001;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessageW(ref MSG lpMsg);
 
     // MARK: Console (self-test output)
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Avalonia.Threading;
 using VoiceFlow.Core;
 using VoiceFlow.Core.AI;
 using VoiceFlow.Core.Audio;
@@ -9,7 +10,8 @@ using VoiceFlow.Core.Speech;
 using VoiceFlow.Core.Text;
 using VoiceFlow.Windows.Audio;
 using VoiceFlow.Windows.Native;
-using VoiceFlow.Windows.UI;
+using VoiceFlow.Desktop.Services;
+using VoiceFlow.Windows.Shell;
 
 namespace VoiceFlow.Windows.Dictation;
 
@@ -25,12 +27,11 @@ internal sealed class DictationController : IDisposable
     readonly FlowBarController _bar;
     readonly TextInserter _inserter;
     readonly OutputMuter _muter;
-    readonly System.Windows.Forms.Timer _levelTimer = new() { Interval = 33 };
-    readonly System.Windows.Forms.Timer _segmentTimer = new() { Interval = 1000 };
+    readonly DispatcherTimer _levelTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    readonly DispatcherTimer _segmentTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
     readonly SharedMicrophone _microphone;
     readonly DeliveryLog _deliveries;
-    readonly SynchronizationContext? _ui;
 
     MicSubscription? _recorder;
     bool _recording;
@@ -42,6 +43,7 @@ internal sealed class DictationController : IDisposable
     SessionKind _kind;
     TypingContext _context = TypingContext.None;
     Task<FieldState>? _fieldTask;
+    Task<string>? _beforeCursorTask;
     /// <summary>Set once the target is known to be a password field: nothing is uploaded.</summary>
     bool _blockedField;
     string? _whisperPrompt;
@@ -71,7 +73,6 @@ internal sealed class DictationController : IDisposable
         _muter = muter;
         _microphone = microphone ?? MicrophoneHub.Shared;
         _deliveries = AppDiagnostics.LogFor(model);
-        _ui = SynchronizationContext.Current;
         _levelTimer.Tick += (_, _) => TickLevel();
         _segmentTimer.Tick += (_, _) => TickSegments();
     }
@@ -135,12 +136,12 @@ internal sealed class DictationController : IDisposable
             var session = _session;
             _ = DelayThen(250, () => { if (_recording && _session == session) _muter.Mute(); });
         }
-        _bar.Set(kind == SessionKind.Command ? BarPhase.Command : BarPhase.Listening);
+        _bar.Set(kind == SessionKind.Command ? FlowPhase.Command : FlowPhase.Listening);
 
         // Check the field while the user talks: a password field stops the session before any audio is sent.
         var started = _session;
         _fieldTask = FocusInfo.FocusedFieldStateAsync(_context.Window, timeoutMs: 1500);
-        _ = _fieldTask.ContinueWith(t =>
+        _ = _fieldTask.ContinueWith(t => Dispatcher.UIThread.Post(() =>
         {
             if (t.Result != FieldState.Password || started != _session) return;
             _blockedField = true;
@@ -152,7 +153,9 @@ internal sealed class DictationController : IDisposable
                 _bar.Show("VoiceFlow doesn't listen in password fields", seconds: 3);
                 Note(DeliveryReason.Blocked, DeliveryDetail.PasswordField, kind: kind);
             }
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+        }), TaskContinuationOptions.OnlyOnRanToCompletion);
+        // Read early, while the caret is still where the dictation started. Password managers and terminals are left unread.
+        _beforeCursorTask = _context.IsTerminal || _context.IsExcluded ? Task.FromResult("") : FocusInfo.BeforeCursorAsync();
 
         _levelTimer.Start();
         _segmentTimer.Start();
@@ -163,13 +166,13 @@ internal sealed class DictationController : IDisposable
     {
         if (!_recording) return;
         _kind = SessionKind.Command;
-        _bar.Set(BarPhase.Command);
+        _bar.Set(FlowPhase.Command);
     }
 
     public void Lock()
     {
         if (!_recording) return;
-        if (_kind == SessionKind.Dictation) _bar.Set(BarPhase.HandsFree);
+        if (_kind == SessionKind.Dictation) _bar.Set(FlowPhase.HandsFree);
     }
 
     public void Cancel()
@@ -178,7 +181,7 @@ internal sealed class DictationController : IDisposable
         var seconds = (DateTime.UtcNow - _startedAt).TotalSeconds;
         StopCapture();
         _segments = [];
-        _bar.Set(BarPhase.Idle);
+        _bar.Set(FlowPhase.Idle);
         Note(DeliveryReason.Cancelled, audioSeconds: seconds);
         Logger.Info("Session cancelled");
     }
@@ -201,7 +204,7 @@ internal sealed class DictationController : IDisposable
             {
                 case CaptureVerdict.TooShort:
                     // Too short to be speech: drop it quietly.
-                    _bar.Set(BarPhase.Idle);
+                    _bar.Set(FlowPhase.Idle);
                     Note(DeliveryReason.TooShort, audioSeconds: audioSeconds);
                     break;
                 case CaptureVerdict.NoAudio or CaptureVerdict.DigitalSilence:
@@ -218,7 +221,7 @@ internal sealed class DictationController : IDisposable
         }
         var kind = _kind;
         var context = _context;
-        _bar.Set(BarPhase.Processing);
+        _bar.Set(FlowPhase.Processing);
         var finalRange = _cutter.Finish(samples.Length);
         // ProcessAsync can finish synchronously (password field, all segments already back and empty). Its
         // finally block then clears _processing before this assignment, which would leave the app "still
@@ -254,7 +257,8 @@ internal sealed class DictationController : IDisposable
                 return;
             }
             Logger.Info($"Transcribed {audioSeconds:0.0} s of audio into {TextUtil.WhitespaceWords(transcript).Length} words in {began.ElapsedMilliseconds} ms");
-            if (kind == SessionKind.Dictation) await DeliverDictationAsync(transcript, context, audioSeconds, began);
+            var beforeCursor = _beforeCursorTask != null ? await _beforeCursorTask : "";
+            if (kind == SessionKind.Dictation) await DeliverDictationAsync(transcript, context, beforeCursor, audioSeconds, began);
             else await RunCommandAsync(transcript, context, audioSeconds, began);
         }
         catch (ProviderException e)
@@ -276,13 +280,13 @@ internal sealed class DictationController : IDisposable
         finally
         {
             _processing = null;
-            if (_bar.Phase == BarPhase.Processing) _bar.Set(BarPhase.Idle);
+            if (_bar.Phase == FlowPhase.Processing) _bar.Set(FlowPhase.Idle);
         }
     }
 
     // MARK: Delivery
 
-    async Task DeliverDictationAsync(string transcript, TypingContext context, double audioSeconds, Stopwatch began)
+    async Task DeliverDictationAsync(string transcript, TypingContext context, string beforeCursor, double audioSeconds, Stopwatch began)
     {
         var prefs = _model.Preferences;
         string final;
@@ -304,7 +308,8 @@ internal sealed class DictationController : IDisposable
                 var screenNames = context.IsTerminal ? [] : NameExtractor.Extract([context.WindowTitle], 20);
                 var names = _model.DictionaryTerms.Concat(screenNames).Take(40).ToList();
                 var style = AppClassifier.Style(context.ProcessName, context.WindowTitle, prefs);
-                var request = new CleanupRequest(transcript, style, context.AppName, names, "", [], AppClassifier.TagsFiles(context.ProcessName),
+                var files = await MentionedFilesAsync(context, transcript);
+                var request = new CleanupRequest(transcript, style, context.AppName, names, beforeCursor, files, AppClassifier.TagsFiles(context.ProcessName),
                                                  prefs.CleanupLevel, prefs.SpeaksTelugu ? prefs.TeluguScript : null);
                 var outcome = await new TextCleaner(new GroqChat(key), prefs.CleanupModel).CleanAsync(request);
                 cleaned = outcome.Text;
@@ -332,6 +337,54 @@ internal sealed class DictationController : IDisposable
         };
         _model.Record(entry);
         Logger.Info($"Dictation delivered in {latency} ms via {result.Reason.WireName()}");
+        if (result.Result is InsertResult.Pasted or InsertResult.PastedUnverified) ScheduleAutoLearn(final, result.FieldBefore, context);
+    }
+
+    /// <summary>Spoken file names in a code editor, for @file tags. Limited to a short wait so it never delays the paste.</summary>
+    static async Task<IReadOnlyList<string>> MentionedFilesAsync(TypingContext context, string transcript)
+    {
+        if (!AppClassifier.IsCode(context.ProcessName) || WorkspaceFiles.StorageFolder(context.ProcessName) is not { } editor) return [];
+        var title = context.WindowTitle;
+        var work = Task.Run<IReadOnlyList<string>>(() =>
+        {
+            try
+            {
+                var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), editor, "User", "globalStorage", "storage.json");
+                if (!File.Exists(path) || new FileInfo(path).Length > 8_000_000) return [];
+                var folder = WorkspaceFiles.ProjectFolder(File.ReadAllText(path), title, Directory.Exists);
+                return folder == null ? [] : WorkspaceFiles.Mentioned(transcript, WorkspaceFiles.Files(folder));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+        });
+        var finished = await Task.WhenAny(work, Task.Delay(800));
+        return finished == work ? work.Result : [];
+    }
+
+    /// <summary>Re-reads the field 15 seconds after a dictation: a word you corrected may belong in the dictionary. Same guards as macOS.</summary>
+    void ScheduleAutoLearn(string inserted, string? fieldBefore, TypingContext context)
+    {
+        if (!_model.Preferences.AutoLearnWords || context.IsExcluded || context.IsTerminal) return;
+        _ = AutoLearnAsync(inserted, fieldBefore ?? "");
+    }
+
+    async Task AutoLearnAsync(string inserted, string fieldBefore)
+    {
+        var field = await FocusInfo.CaptureFieldAsync();
+        if (field == null) return;
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(15));
+            var after = await FocusInfo.ReadHeldFieldAsync(field);
+            if (after == null || _bar.Phase != FlowPhase.Idle) return;
+            var known = _model.DictionaryTerms.Select(t => t.ToLowerInvariant()).ToHashSet();
+            var terms = AutoLearner.LearnedTerms(inserted, fieldBefore, after, known);
+            if (terms.Count == 0) return;
+            foreach (var term in terms) _model.AddDictionaryEntry(term, null, DictionarySource.AutoLearned);
+            _bar.Show($"Added to dictionary: {string.Join(", ", terms)}",
+                      action: new ToastAction("Undo", () => terms.ForEach(_model.RemoveDictionaryTerm)), seconds: 6);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException) { Logger.Warn($"Auto-learn stopped: {e.GetType().Name}"); }
+        finally { field.Dispose(); }
     }
 
     /// <summary>Records how a session ended. Codes and numbers only.</summary>
@@ -348,11 +401,11 @@ internal sealed class DictationController : IDisposable
         switch (outcome.Result)
         {
             case InsertResult.Pasted:
-                _bar.Set(BarPhase.Idle);
+                _bar.Set(FlowPhase.Idle);
                 return true;
             case InsertResult.PastedUnverified:
                 // Apps that can't be read back still got the paste; the bar stays out of the way.
-                _bar.Set(BarPhase.Idle);
+                _bar.Set(FlowPhase.Idle);
                 return true;
             case InsertResult.PasteNotLanded:
                 OfferPaste("Didn't reach that field", preview, 6);
@@ -423,7 +476,7 @@ internal sealed class DictationController : IDisposable
                     break;
                 case CommandAction.Search:
                     OpenUri(CommandPrompt.SearchUrl(result.Text).AbsoluteUri);
-                    _bar.Set(BarPhase.Idle);
+                    _bar.Set(FlowPhase.Idle);
                     outcome = "search";
                     break;
                 case CommandAction.Answer:
@@ -489,6 +542,12 @@ internal sealed class DictationController : IDisposable
             _bar.Show("Nothing to paste yet", seconds: 1.5);
             return;
         }
+        await PasteTextAsync(text);
+    }
+
+    /// <summary>Types text into the focused app, or the last app the user worked in when VoiceFlow itself has focus.</summary>
+    public async Task PasteTextAsync(string text)
+    {
         var target = NativeMethods.GetForegroundWindow();
         if (target == IntPtr.Zero || FocusInfo.IsOwnWindow(target))
         {
@@ -565,8 +624,7 @@ internal sealed class DictationController : IDisposable
             Finish();
             ResetHotkeySession(false);
         }
-        if (_ui != null) _ui.Post(_ => Handle(), null);
-        else Handle();
+        Dispatcher.UIThread.Post(Handle);
     }
 
     void TickLevel()
@@ -647,7 +705,7 @@ internal sealed class DictationController : IDisposable
     public void Dispose()
     {
         Shutdown();
-        _levelTimer.Dispose();
-        _segmentTimer.Dispose();
+        _levelTimer.Stop();
+        _segmentTimer.Stop();
     }
 }

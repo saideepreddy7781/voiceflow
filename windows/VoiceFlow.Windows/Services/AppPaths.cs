@@ -17,7 +17,7 @@ internal static class AppPaths
 
     public static string LogFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VoiceFlow", "logs");
 
-    public static string ExePath => Environment.ProcessPath ?? Application.ExecutablePath;
+    public static string ExePath => Environment.ProcessPath ?? "";
 }
 
 /// <summary>"Start with Windows": a value under HKCU\Software\Microsoft\Windows\CurrentVersion\Run. Off by default.</summary>

@@ -53,11 +53,16 @@ public sealed partial class MeetingsViewModel : ObservableObject
         if (value == null) { Pane = null; return; }
         // Refresh rebuilds the list; keep the open pane so edits in progress are not lost.
         if (value.Recording && Pane is LiveMeetingViewModel) return;
-        if (Pane is MeetingDetailViewModel open && open.Meeting.Id == value.Meeting?.Id) return;
+        var open = Pane as MeetingDetailViewModel;
+        if (open != null && value.Meeting != null && open.IsCurrent(value.Meeting)) return;
         (Pane as IDisposable)?.Dispose();
         Pane = value.Recording
             ? new LiveMeetingViewModel(_services)
-            : new MeetingDetailViewModel(value.Meeting!, _services, _showDialog);
+            : new MeetingDetailViewModel(value.Meeting!, _services, _showDialog)
+            {
+                // The same meeting with new notes: stay on the tab the user was reading.
+                ShowTranscript = open?.Meeting.Id == value.Meeting?.Id && open?.ShowTranscript == true,
+            };
     }
 
     void Refresh()
@@ -103,6 +108,7 @@ public sealed partial class LiveMeetingViewModel : ObservableObject, IDisposable
         Refresh();
         Tick();
         _meetings.LevelsChanged += OnLevels;
+        _meetings.Changed += OnMeetingChanged;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
@@ -126,6 +132,16 @@ public sealed partial class LiveMeetingViewModel : ObservableObject, IDisposable
         foreach (var l in Meeting?.Lines ?? [])
             Lines.Add(new TranscriptRow(l, Meeting!));
         OnLevels(this, EventArgs.Empty);
+    }
+
+    /// <summary>New transcript chunks arrive while the meeting runs.</summary>
+    void OnMeetingChanged(object? sender, EventArgs e)
+    {
+        if (Meeting is not { } live || live.Lines.Count == Lines.Count) return;
+        Refresh();
+        OnPropertyChanged(nameof(Title));
+        OnPropertyChanged(nameof(MicOnly));
+        OnPropertyChanged(nameof(HasOthers));
     }
 
     void OnLevels(object? sender, EventArgs e)
@@ -152,6 +168,7 @@ public sealed partial class LiveMeetingViewModel : ObservableObject, IDisposable
     {
         _timer.Stop();
         _meetings.LevelsChanged -= OnLevels;
+        _meetings.Changed -= OnMeetingChanged;
     }
 }
 
@@ -200,12 +217,16 @@ public sealed partial class MeetingDetailViewModel : ObservableObject
 {
     readonly IAppServices _services;
     readonly Action<object?> _showDialog;
+    readonly MeetingStatus _shownStatus;
+    readonly MeetingNotes? _shownNotes;
 
     public MeetingDetailViewModel(Meeting meeting, IAppServices services, Action<object?> showDialog)
     {
         Meeting = meeting;
         _services = services;
         _showDialog = showDialog;
+        _shownStatus = meeting.Status;
+        _shownNotes = meeting.Notes;
         _title = meeting.Title;
         _youName = meeting.LabelFor(Speaker.You);
         _othersName = meeting.LabelFor(Speaker.Others);
@@ -218,6 +239,11 @@ public sealed partial class MeetingDetailViewModel : ObservableObject
     }
 
     public Meeting Meeting { get; }
+
+    /// <summary>False once the notes shown here were replaced or the status moved on (notes finished writing, for example).</summary>
+    public bool IsCurrent(Meeting meeting) =>
+        ReferenceEquals(meeting, Meeting) && meeting.Status == _shownStatus && ReferenceEquals(meeting.Notes, _shownNotes);
+
     public IReadOnlyList<string> Summary { get; }
     public IReadOnlyList<string> Decisions { get; }
     public IReadOnlyList<ActionItemRow> ActionItems { get; }
