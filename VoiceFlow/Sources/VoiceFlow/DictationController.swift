@@ -280,11 +280,9 @@ final class DictationController {
         Sounds.done(prefs.playSounds)
         if let note { log.notice("Cleanup skipped: \(note, privacy: .private)") }
         switch result {
-        case .accessibility, .pastedVerified:
+        case .accessibility, .pastedVerified, .pastedUnverified:
+            // Apps that can't be read back (VS Code, Slack) still got the paste; the bar stays out of the way.
             model.pill.set(.idle)
-            scheduleAutoLearn(inserted: final, context: context)
-        case .pastedUnverified:
-            offerPaste("Pasted, but couldn't confirm it", text: final, seconds: 3)
             scheduleAutoLearn(inserted: final, context: context)
         case .pasteNotLanded:
             offerPaste("Didn't reach that field", detail: String(final.prefix(140)), text: final, seconds: 6)
