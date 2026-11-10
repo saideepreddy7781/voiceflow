@@ -17,6 +17,34 @@ public class GestureTests
     static readonly A BeginD = A.Begin(SessionKind.Dictation), BeginC = A.Begin(SessionKind.Command);
     static readonly A FinishD = A.Finish(SessionKind.Dictation), FinishC = A.Finish(SessionKind.Command);
 
+    /// <summary>The hook can miss a release behind a UAC prompt; the real key state ends the session.</summary>
+    [Fact]
+    public void AReleaseTheHookMissedEndsTheChord()
+    {
+        var physicallyDown = new HashSet<int> { H.VK_LCONTROL, H.VK_LWIN };
+        var p = new H(Hotkey.CtrlWin, new GestureRecognizer(), physicallyDown.Contains);
+        p.Handle(new KeyInput(H.VK_LCONTROL, true), 0);
+        Assert.Equal([BeginD], p.Handle(new KeyInput(H.VK_LWIN, true), 0.1).Actions);
+        Assert.Empty(p.ReleaseChordIfUp(1));
+        Assert.True(p.ChordActive);
+
+        physicallyDown.Clear();
+        Assert.Equal([FinishD], p.ReleaseChordIfUp(2));
+        Assert.False(p.ChordActive);
+
+        Assert.Empty(p.ReleaseChordIfUp(3));
+    }
+
+    [Fact]
+    public void ChordCheckIgnoresASessionWithoutAKeyStateSource()
+    {
+        var p = new H(Hotkey.CtrlWin, new GestureRecognizer());
+        p.Handle(new KeyInput(H.VK_LCONTROL, true), 0);
+        p.Handle(new KeyInput(H.VK_LWIN, true), 0.1);
+        Assert.Empty(p.ReleaseChordIfUp(5));
+        Assert.True(p.ChordActive);
+    }
+
     [Fact] public void HoldIsPushToTalk() => Assert.Equal([BeginD, FinishD], Run(E.HotkeyDown(0, false), E.HotkeyUp(1.2)));
 
     [Fact] public void RecordingStartsOnPress() => Assert.Equal([BeginD], new GestureRecognizer().Handle(E.HotkeyDown(0, false)));

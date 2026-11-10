@@ -20,6 +20,7 @@ internal sealed class HotkeyMonitor : IDisposable
     readonly HotkeyProcessor _processor;
     readonly DispatcherTimer _tickTimer = new();
     readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromMinutes(10) };
+    readonly DispatcherTimer _chordWatch = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly Action<GestureAction> _onGesture;
     readonly Action<HotkeyShortcut> _onShortcut;
     /// <summary>Guards <see cref="_processor"/>, used by the hook thread and the UI thread.</summary>
@@ -51,6 +52,18 @@ internal sealed class HotkeyMonitor : IDisposable
             bool idle;
             lock (_gate) idle = !_processor.Recognizer.IsActive && !_processor.ChordActive;
             if (idle) Reinstall("periodic refresh");
+        };
+        _chordWatch.Tick += (_, _) =>
+        {
+            IReadOnlyList<GestureAction> actions;
+            bool active;
+            lock (_gate)
+            {
+                actions = _processor.ReleaseChordIfUp(Now);
+                active = _processor.ChordActive;
+            }
+            if (!active) _chordWatch.Stop();
+            if (actions.Count > 0) Dispatch(actions);
         };
         SystemEvents.SessionSwitch += OnSessionSwitch;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
@@ -203,7 +216,13 @@ internal sealed class HotkeyMonitor : IDisposable
     {
         _tickTimer.Stop();
         double? next;
-        lock (_gate) next = _processor.Recognizer.Deadline;
+        bool chord;
+        lock (_gate)
+        {
+            next = _processor.Recognizer.Deadline;
+            chord = _processor.ChordActive;
+        }
+        if (chord) _chordWatch.Start();
         if (next is not { } deadline) return;
         _tickTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, Math.Ceiling((deadline - Now) * 1000) + 5));
         _tickTimer.Start();
@@ -237,5 +256,6 @@ internal sealed class HotkeyMonitor : IDisposable
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         Stop();
         _tickTimer.Stop();
+        _chordWatch.Stop();
     }
 }

@@ -203,10 +203,32 @@ internal sealed class Notetaker : IDisposable
         _bar.MeetingSince = null;
         _tick.Stop();
         Changed?.Invoke();
-        var meeting = await _recorder.StopAsync();
+        Meeting? meeting;
+        var failed = false;
+        try
+        {
+            meeting = await _recorder.StopAsync();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // Without this the app would stay in "writing notes" and no later meeting could start.
+            Logger.Error("The meeting could not be finished", e);
+            meeting = _recorder.Snapshot();
+            failed = true;
+        }
         Live = null;
         Current = State.Idle;
         if (meeting == null) { Changed?.Invoke(); return; }
+        if (failed)
+        {
+            meeting.Status = MeetingStatus.Failed;
+            meeting.End ??= DateTimeOffset.Now;
+            meeting.Error = "Something went wrong while finishing this meeting. Press Try again.";
+            Meetings.RemoveAll(m => m.Id == meeting.Id);
+            Meetings.Insert(0, meeting);
+            Save();
+            return;
+        }
         meeting.Status = MeetingStatus.WritingNotes;
         Meetings.RemoveAll(m => m.Id == meeting.Id);   // the live snapshot
         Meetings.Insert(0, meeting);
@@ -282,6 +304,13 @@ internal sealed class Notetaker : IDisposable
             SaveToFolder(meeting);
             Save();
         }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Logger.Error("Meeting notes could not be written", e);
+            meeting.Status = MeetingStatus.Failed;
+            meeting.Error = "The notes could not be written. Press Try again.";
+            Save();
+        }
     }
 
     /// <summary>Applies the Telugu and Hindi writing choices to a newly recorded transcript. Older meetings stay as they are.</summary>
@@ -295,7 +324,7 @@ internal sealed class Notetaker : IDisposable
         if (!Meetings.Contains(meeting)) return;
         meeting.Lines = result.Lines;
         meeting.ScriptRewritten = result.Note == null;
-        if (result.Note != null) meeting.Note = meeting.Note == null ? result.Note : $"{meeting.Note} {result.Note}";
+        if (result.Note != null && meeting.Note?.Contains(result.Note, StringComparison.Ordinal) != true) meeting.Note = meeting.Note == null ? result.Note : $"{meeting.Note} {result.Note}";
         Save();
     }
 

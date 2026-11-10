@@ -141,7 +141,17 @@ public sealed class UpdateChecker(HttpClient? client = null)
         catch (JsonException) { return null; }
     }
 
-    /// <summary>The link opens in the browser, so only this repository's own pages are accepted.</summary>
-    static string SafeUrl(string? url) =>
-        url != null && url.StartsWith(RepositoryUrl + "/", StringComparison.Ordinal) && Uri.TryCreate(url, UriKind.Absolute, out _) ? url : ReleasesUrl;
+    /// <summary>
+    /// The link opens in the browser, so only this repository's own release pages are accepted. The path is read after
+    /// parsing, because a prefix check alone would pass ".../voiceflow/../../other-repo".
+    /// </summary>
+    internal static string SafeUrl(string? url)
+    {
+        const string path = "/saideepreddy7781/voiceflow/releases";
+        if (url == null || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return ReleasesUrl;
+        var ours = uri.Scheme == Uri.UriSchemeHttps && uri.IdnHost == "github.com" && uri.UserInfo.Length == 0
+                   && (uri.AbsolutePath == path || uri.AbsolutePath.StartsWith(path + "/", StringComparison.Ordinal))
+                   && !url.Contains("%", StringComparison.Ordinal) && !url.Contains("/../", StringComparison.Ordinal) && !url.EndsWith("/..", StringComparison.Ordinal);
+        return ours ? url : ReleasesUrl;
+    }
 }

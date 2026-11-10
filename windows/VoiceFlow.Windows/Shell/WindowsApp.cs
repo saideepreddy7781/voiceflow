@@ -47,6 +47,7 @@ internal sealed class WindowsApp
     OnboardingWindow? _onboarding;
     IntPtr _lastExternalWindow;
     bool _quit;
+    System.Threading.Timer? _quitWatchdog;   // a field, so the GC can't collect it while quitting
 
     public static WindowsApp? Current { get; private set; }
 
@@ -89,16 +90,17 @@ internal sealed class WindowsApp
         _model.PreferencesChanged += OnPreferencesChanged;
         _notetaker.Changed += UpdateTray;
 
+        _meetingItem = new NativeMenuItem("Start meeting notes");
+        _meetingItem.Click += (_, _) => Guarded(ToggleMeeting);
+        _tray = BuildTray();
+        UpdateTray();
+
+        // Only now: a change here raises PreferencesChanged, which updates the tray menu.
         // The registry is the truth for "Start with Windows" (the user can turn it off in Task Manager).
         // When it is on, rewrite it so it points at this copy of VoiceFlow.exe.
         var startup = StartupRegistration.IsEnabled;
         if (startup) TrySetStartup(true);
         if (startup != _model.Preferences.LaunchAtLogin) _model.UpdatePreferences(p => p.LaunchAtLogin = startup);
-
-        _meetingItem = new NativeMenuItem("Start meeting notes");
-        _meetingItem.Click += (_, _) => ToggleMeeting();
-        _tray = BuildTray();
-        UpdateTray();
 
         // Remember the last window the user worked in, so "Paste last" from this menu goes back there.
         _foregroundProc = OnForegroundChanged;
@@ -139,7 +141,7 @@ internal sealed class WindowsApp
             Item("Quit VoiceFlow", Quit),
         };
         var tray = new TrayIcon { Icon = LoadIcon(), Menu = menu, IsVisible = true };
-        tray.Clicked += (_, _) => ShowMain(null);
+        tray.Clicked += (_, _) => Guarded(() => ShowMain(null));
         TrayIcon.SetIcons(Application.Current!, new TrayIcons { tray });
         return tray;
     }
@@ -147,8 +149,15 @@ internal sealed class WindowsApp
     static NativeMenuItem Item(string title, Action action)
     {
         var item = new NativeMenuItem(title);
-        item.Click += (_, _) => action();
+        item.Click += (_, _) => Guarded(action);
         return item;
+    }
+
+    /// <summary>Menu clicks arrive inside a window message, and an exception escaping one ends the process.</summary>
+    static void Guarded(Action action)
+    {
+        try { action(); }
+        catch (Exception e) when (e is not OutOfMemoryException) { Logger.Error("A menu command failed", e); }
     }
 
     internal static WindowIcon? LoadIcon()
@@ -247,7 +256,17 @@ internal sealed class WindowsApp
 
     // MARK: Windows
 
-    MainWindow Main => _main ??= new MainWindow { DataContext = _shell, HideOnClose = true };
+    MainWindow Main
+    {
+        get
+        {
+            if (_main != null) return _main;
+            _main = new MainWindow { DataContext = _shell, HideOnClose = true };
+            // The microphone test has no window of its own: closing this one must not leave the mic open.
+            _main.Closing += (_, _) => { if (_services.Microphone.IsTesting) _services.Microphone.StopTest(); };
+            return _main;
+        }
+    }
 
     public void ShowMain(Page? page)
     {
@@ -276,6 +295,7 @@ internal sealed class WindowsApp
         {
             _onboarding = null;
             if (_services.Microphone.IsTesting) _services.Microphone.StopTest();
+            if (_quit) return;   // quitting closes this window too: nothing new may open
             if (!_model.HasKey(SecretKey.Groq))
             {
                 ShowMain(Page.Settings);
@@ -308,24 +328,31 @@ internal sealed class WindowsApp
         if (_quit) return;
         _quit = true;
         Logger.Info("Quitting");
-        ((ScratchpadService)_services.Scratchpad).Flush();
-        _meetingWatcher.Dispose();
-        _updates.Stop();
-        _notetaker.Dispose();
-        _dictation.Dispose();
-        _hotkeys.Dispose();
+        // A stuck audio driver can block the steps below. Quitting never waits on one for longer than this.
+        _quitWatchdog = new System.Threading.Timer(_ => Environment.Exit(0), null, TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+        // Each step is on its own: one failing must not leave the mic on or the process running with no tray icon.
+        Guarded(((ScratchpadService)_services.Scratchpad).Flush);
+        Guarded(_meetingWatcher.Dispose);
+        Guarded(_updates.Stop);
+        Guarded(_notetaker.Dispose);
+        Guarded(_dictation.Dispose);
+        Guarded(_hotkeys.Dispose);
         if (_foregroundHook != IntPtr.Zero) UnhookWinEvent(_foregroundHook);
         _housekeeping.Stop();
-        _tray.IsVisible = false;
-        _tray.Dispose();
-        if (_main != null)
+        Guarded(() =>
         {
+            _tray.IsVisible = false;
+            _tray.Dispose();
+        });
+        Guarded(() =>
+        {
+            if (_main == null) return;
             _main.HideOnClose = false;
             _main.Close();
-        }
-        _barHost.Dispose();
-        _bar.Dispose();
-        _clipboardOwner.Dispose();
+        });
+        Guarded(_barHost.Dispose);
+        Guarded(_bar.Dispose);
+        Guarded(_clipboardOwner.Dispose);
         _desktop.Shutdown();
     }
 }

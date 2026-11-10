@@ -351,6 +351,7 @@ internal sealed class MicrophoneService : IMicrophoneService
     {
         if (_test is not { } test) return;
         TestLevel = test.CurrentLevel();
+        test.Drain();   // nothing keeps this audio, and an hour of it would be 230 MB
         TestLevelChanged?.Invoke(this, EventArgs.Empty);
     }
 }

@@ -19,6 +19,7 @@ using VoiceFlow.Windows.Dictation;
 using VoiceFlow.Windows.Input;
 using VoiceFlow.Windows.Meetings;
 using VoiceFlow.Windows.Native;
+using VoiceFlow.Desktop.Services;
 using VoiceFlow.Desktop.ViewModels;
 using VoiceFlow.Desktop.Views;
 using VoiceFlow.Windows.Shell;
@@ -90,7 +91,10 @@ internal static class SelfTest
             if (uiReady)
             {
                 Check("resources", ResourcesCheck);
+                Check("tray-icon", TrayIconCheck);
                 Check("flow-bar-window", () => FlowBarWindowCheck(temp));
+                Check("flow-bar-paint", () => FlowBarPaintCheck(temp));
+                Check("dictation-bar-reset", () => DictationBarResetCheck(temp));
                 Check("ui", () => UiCheck(temp));
             }
         }
@@ -557,10 +561,118 @@ internal static class SelfTest
             PumpFor(TimeSpan.FromMilliseconds(200));
             Assert(IsWindowVisible(host.Handle), "a toast did not show the bar");
             Assert((GetWindowLongPtrW(host.Handle, GWL_EXSTYLE).ToInt64() & WS_EX_NOACTIVATE) != 0, "showing the bar dropped WS_EX_NOACTIVATE");
+
+            // Avalonia calls SetFocus on every click, and rebuilds the extended style on any window change.
+            SetFocus(host.Handle);
+            PumpMessages();
+            Assert(GetFocus() != host.Handle, "the bar accepted the keyboard focus, so a click would steal it from the app being typed in");
+            host.Window.CanResize = true;
+            host.Window.CanResize = false;
+            PumpFor(TimeSpan.FromMilliseconds(50));
+            var rebuilt = GetWindowLongPtrW(host.Handle, GWL_EXSTYLE).ToInt64();
+            Assert((rebuilt & WS_EX_NOACTIVATE) != 0 && (rebuilt & WS_EX_LAYERED) != 0 && (rebuilt & WS_EX_TRANSPARENT) != 0, $"Avalonia's style update dropped the bar's flags (0x{rebuilt:X8})");
+
             bar.DismissToast();
             PumpFor(TimeSpan.FromMilliseconds(100));
             Assert(!IsWindowVisible(host.Handle), "the bar stayed on screen after its toast");
-            return $"extended styles 0x{style:X8}; hidden at rest, shown by a toast, hidden again";
+            return $"extended styles 0x{style:X8}; hidden at rest, shown by a toast, refuses focus, keeps its flags, hidden again";
+        }
+    }
+
+    /// <summary>
+    /// The bar is layered on top of Avalonia's composition surface: this reads the real screen to see that it paints.
+    /// A runner with no composited desktop can't show that either way, so it skips instead of failing.
+    /// </summary>
+    static string FlowBarPaintCheck(string temp)
+    {
+        if (!HasInteractiveDesktop()) throw new SkipException("no interactive desktop");
+        var (_, hub, dictation, notetaker, bar, services, owner) = Compose(Path.Combine(temp, "paint"));
+        using (hub) using (dictation) using (notetaker) using (bar) using (owner)
+        using (var host = new FlowBarHost(bar, new FlowBarViewModel(services, runClock: false)))
+        {
+            bar.Show("Self-test", seconds: 30);
+            PumpFor(TimeSpan.FromMilliseconds(500));
+            var scale = host.Window.RenderScaling;
+            var position = host.Window.Position;
+            var width = (int)Math.Max(1, host.Window.ClientSize.Width * scale);
+            // The toast is the first thing below the window's 16-pixel top padding; its fill is #161616.
+            var row = position.Y + (int)(30 * scale);
+            var screen = GetDC(IntPtr.Zero);
+            var memory = CreateCompatibleDC(screen);
+            var bitmap = CreateCompatibleBitmap(screen, width, 1);
+            var previous = SelectObject(memory, bitmap);
+            try
+            {
+                if (!BitBlt(memory, 0, 0, width, 1, screen, position.X, row, SRCCOPY | CAPTUREBLT)) throw new SkipException("the screen could not be read");
+                var hits = 0;
+                for (int x = 0; x < width; x += Math.Max(1, width / 40))
+                {
+                    var color = GetPixel(memory, x, 0);
+                    int r = (int)(color & 0xFF), g = (int)((color >> 8) & 0xFF), b = (int)((color >> 16) & 0xFF);
+                    if (Math.Abs(r - 0x16) <= 16 && Math.Abs(g - 0x16) <= 16 && Math.Abs(b - 0x16) <= 16) hits++;
+                }
+                if (hits == 0) throw new SkipException($"the toast's fill was not found on screen at y={row} (headless desktop, or the bar did not paint)");
+                return $"{hits} points of the toast's fill read from the screen";
+            }
+            finally
+            {
+                SelectObject(memory, previous);
+                DeleteObject(bitmap);
+                DeleteDC(memory);
+                ReleaseDC(IntPtr.Zero, screen);
+                bar.DismissToast();
+            }
+        }
+    }
+
+    /// <summary>A dictation that heard nothing must take the listening pill off the screen when its toast ends.</summary>
+    static string DictationBarResetCheck(string temp)
+    {
+        var folder = Path.Combine(temp, "reset");
+        Directory.CreateDirectory(folder);
+        var model = new AppModel(folder, credentialPrefix: $"VoiceFlow-selftest-{Guid.NewGuid():N}/");
+        model.UpdatePreferences(p => { p.PlaySounds = false; p.MuteAudioWhileDictating = false; });
+        var source = new SimulatedMicrophoneSource();
+        using var hub = new SharedMicrophone(source, new SharedMicrophoneOptions { PollInterval = null });
+        using var bar = new FlowBarController();
+        using var owner = new MessageWindow();
+        using var dictation = new DictationController(model, bar, new TextInserter(new ClipboardService(owner.Handle)), new OutputMuter(folder), hub);
+        model.SaveKey(SecretKey.Groq, "selftest-not-a-real-key");
+        try
+        {
+            dictation.Begin(SessionKind.Dictation);
+            if (!dictation.IsRecording) throw new SkipException("this window can't be dictated into");
+            source.Latest!.Emit(new float[(int)AudioMath.SampleRate]);   // a second of digital silence
+            dictation.Finish();
+            PumpFor(TimeSpan.FromMilliseconds(50));
+            Assert(bar.Phase == FlowPhase.Idle, $"the bar was left in {bar.Phase} after a dictation with no speech");
+            Assert(bar.ShouldShow, "the toast did not show");
+            bar.DismissToast();
+            Assert(!bar.ShouldShow, "the bar stayed on screen after its toast");
+            return "no-audio dictation returned the bar to rest";
+        }
+        finally
+        {
+            model.DeleteKey(SecretKey.Groq);
+        }
+    }
+
+    /// <summary>The tray icon and menu, built the way the real app builds them, then removed.</summary>
+    static string TrayIconCheck()
+    {
+        var menu = new NativeMenu { new NativeMenuItem("Self-test") };
+        var tray = new TrayIcon { Icon = WindowsApp.LoadIcon(), Menu = menu, ToolTipText = "VoiceFlow self-test", IsVisible = true };
+        try
+        {
+            TrayIcon.SetIcons(Application.Current!, new TrayIcons { tray });
+            PumpFor(TimeSpan.FromMilliseconds(100));
+            Assert(TrayIcon.GetIcons(Application.Current!) is { Count: 1 }, "the tray icon was not registered");
+            return "built with its menu and icon, then removed";
+        }
+        finally
+        {
+            TrayIcon.SetIcons(Application.Current!, null);
+            tray.Dispose();
         }
     }
 

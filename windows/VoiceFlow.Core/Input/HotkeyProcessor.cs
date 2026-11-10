@@ -92,11 +92,13 @@ public sealed class HotkeyProcessor
 
     bool AnyDown(Func<int, bool> family) => _down.Any(family);
 
-    bool HotkeyHeld() => Hotkey switch
+    bool HotkeyHeld() => HotkeyHeldIn(_down);
+
+    bool HotkeyHeldIn(HashSet<int> keys) => Hotkey switch
     {
-        Hotkey.CtrlWin => AnyDown(IsCtrl) && AnyDown(IsWin),
-        Hotkey.RightAlt => _down.Contains(VK_RMENU),
-        _ => _down.Contains(VK_RCONTROL),
+        Hotkey.CtrlWin => keys.Any(IsCtrl) && keys.Any(IsWin),
+        Hotkey.RightAlt => keys.Contains(VK_RMENU),
+        _ => keys.Contains(VK_RCONTROL),
     };
 
     bool IsCommandModifier(int vk) => Hotkey == Hotkey.RightAlt ? IsShift(vk) : IsAlt(vk);
@@ -184,6 +186,22 @@ public sealed class HotkeyProcessor
         }
         if (!down && _maskOnRelease.Remove(vk)) return new HookResult(HookVerdict.SwallowAndReleaseWithMask, []);
         return HookResult.PassNothing;
+    }
+
+    /// <summary>
+    /// A UAC prompt or another secure desktop hides key releases from the hook. Called now and then while the chord
+    /// is held: if the hotkey is no longer really down, it ends as if it had been released. Without this the
+    /// microphone would stay on until the next press of the hotkey.
+    /// </summary>
+    public IReadOnlyList<GestureAction> ReleaseChordIfUp(double now)
+    {
+        if (!_chordActive || _isPhysicallyDown is null) return [];
+        var held = _down.Where(_isPhysicallyDown).ToHashSet();
+        if (HotkeyHeldIn(held)) return [];
+        _down.IntersectWith(held);
+        _maskOnRelease.IntersectWith(held);
+        _chordActive = false;
+        return _recognizer.Handle(GestureEvent.HotkeyUp(now));
     }
 
     void PruneStale(int current)

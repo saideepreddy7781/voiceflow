@@ -82,6 +82,21 @@ public class UpdateCheckerTests
     [InlineData(HttpStatusCode.OK, """{"tag_name":"v2.0.0","prerelease":true}""")]
     public async Task BadAnswersFail(HttpStatusCode status, string body) => Assert.Equal(UpdateCheckStatus.Failed, (await Check(new Stub(status, body))).Status);
 
+    [Theory]
+    [InlineData("https://github.com/saideepreddy7781/voiceflow/releases/tag/v1.2.3", true)]
+    [InlineData("https://github.com/saideepreddy7781/voiceflow/releases", true)]
+    [InlineData("https://github.com/saideepreddy7781/voiceflow/issues/1", false)]
+    [InlineData("https://github.com/saideepreddy7781/voiceflow/../../attacker/repo/releases", false)]
+    [InlineData("https://github.com/saideepreddy7781/voiceflow/releases/%2e%2e/%2e%2e/%2e%2e/attacker", false)]
+    [InlineData("https://github.com/saideepreddy7781/voiceflow-evil/releases/tag/v1", false)]
+    [InlineData("https://github.com.attacker.example/saideepreddy7781/voiceflow/releases/tag/v1", false)]
+    [InlineData("https://user@github.com/saideepreddy7781/voiceflow/releases/tag/v1", false)]
+    [InlineData("http://github.com/saideepreddy7781/voiceflow/releases/tag/v1", false)]
+    [InlineData("file:///C:/Windows/System32/calc.exe", false)]
+    [InlineData("ms-settings:privacy", false)]
+    public void TheUpdateLinkOnlyOpensThisRepositorysReleases(string url, bool accepted) =>
+        Assert.Equal(accepted ? url : UpdateChecker.ReleasesUrl, UpdateChecker.SafeUrl(url));
+
     [Fact]
     public async Task ALinkOutsideTheRepositoryFallsBackToReleases()
     {

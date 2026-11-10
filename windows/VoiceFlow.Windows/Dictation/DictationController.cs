@@ -151,6 +151,7 @@ internal sealed class DictationController : IDisposable
                 StopCapture();
                 ResetHotkeySession(false);
                 _bar.Show("VoiceFlow doesn't listen in password fields", seconds: 3);
+                _bar.Set(FlowPhase.Idle);   // after the toast, so the window stays up and doesn't flicker
                 Note(DeliveryReason.Blocked, DeliveryDetail.PasswordField, kind: kind);
             }
         }), TaskContinuationOptions.OnlyOnRanToCompletion);
@@ -217,6 +218,8 @@ internal sealed class DictationController : IDisposable
                     Note(DeliveryReason.NoSpeech, DeliveryDetail.Silent, audioSeconds);
                     break;
             }
+            // The microphone is off, so the bar can't keep saying it's listening. Set after the toast so the window stays up.
+            _bar.Set(FlowPhase.Idle);
             return;
         }
         var kind = _kind;

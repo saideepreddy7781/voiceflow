@@ -170,7 +170,9 @@ public static class LanguageResolver
             }
             return new Doubt(DoubtKind.Unlisted, real);
         }
-        if (auto.Language is { } label && LanguageEvidence.Reads(label, auto.Text) == false && plan.OpinionCandidates.Any(l => l != label))
+        // English full of technical terms also fails the reading check, but it isn't spelled by sound.
+        if (auto.Language is { } label && LanguageEvidence.Reads(label, auto.Text) == false && plan.OpinionCandidates.Any(l => l != label)
+            && (label != "en" || LanguageEvidence.LooksSoundSpelled(auto.Text)))
             return new Doubt(DoubtKind.Disguised);
         return confidence < LowConfidence ? new Doubt(DoubtKind.LowConfidence) : null;
     }

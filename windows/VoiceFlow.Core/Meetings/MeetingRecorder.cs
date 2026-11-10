@@ -37,6 +37,8 @@ public sealed class MeetingRecorder
     internal const int FinalAttempts = 3;
     /// <summary>Longest Stop spends retrying failed chunks.</summary>
     internal const double FinalRetrySeconds = 180;
+    /// <summary>Longest Stop spends retrying failed chunks in this recorder (shortened in tests).</summary>
+    internal double FinalRetryLimit { get; set; } = FinalRetrySeconds;
     /// <summary>With less audio budget than this left in the hour, meetings skip second opinions.</summary>
     internal const double SecondOpinionHeadroom = 900;
 
@@ -181,7 +183,9 @@ public sealed class MeetingRecorder
     public async Task<Meeting?> StopAsync(bool retryFailed = true)
     {
         if (!IsRecording) return Snapshot();
-        Tick(final: true);
+        // The capture has to stop however the last tick goes.
+        try { Tick(final: true); }
+        catch (Exception e) when (e is not OutOfMemoryException) { _logError?.Invoke($"The last meeting tick failed: {e.GetType().Name}"); }
         StopSources();
         IsRecording = false;
         MicLevel = 0;
@@ -357,12 +361,16 @@ public sealed class MeetingRecorder
         lock (_gate) _uploads.Add(upload);
     }
 
-    /// <summary>Rate limits are waited out (<see cref="GroqGate"/> has already waited what it can); other errors retried after a short pause.</summary>
-    async Task<Attempt> AttemptAsync(byte[] wav, ChunkRequest request, int tries, CancellationToken cancel)
+    /// <summary>
+    /// Rate limits are waited out (<see cref="GroqGate"/> has already waited what it can); other errors retried after a
+    /// short pause. Past <paramref name="deadline"/> no retry starts, and no pause runs beyond it.
+    /// </summary>
+    async Task<Attempt> AttemptAsync(byte[] wav, ChunkRequest request, int tries, CancellationToken cancel, DateTime? deadline = null)
     {
         Exception last = ProviderException.BadResponse();
         for (int attempt = 1; attempt <= tries; attempt++)
         {
+            if (attempt > 1 && deadline is { } end && DateTime.UtcNow >= end) break;
             try
             {
                 return new Attempt(await _transcribe(wav, request, cancel).ConfigureAwait(false), null);
@@ -381,6 +389,7 @@ public sealed class MeetingRecorder
                     var wait = e is ProviderException { Kind: ProviderErrorKind.RateLimited } p
                         ? Math.Min(60, (p.RetryAfter ?? 10) + 1)
                         : attempt * 2.0;
+                    if (deadline is { } limit) wait = Math.Min(wait, Math.Max(0, (limit - DateTime.UtcNow).TotalSeconds));
                     if (wait > 0) await _delay(TimeSpan.FromSeconds(wait)).ConfigureAwait(false);
                 }
             }
@@ -426,7 +435,9 @@ public sealed class MeetingRecorder
         var side = speaker == Speaker.You ? _micSide : _callSide;
         side.Language = transcript.Language ?? side.Language;
         // A forced language produced this if it isn't what auto-detect would be trusted to say on its own.
-        var viaOpinion = request.Hint != null || (transcript.Language is { } l && l != "en" && request.Plan.Languages.Contains(l));
+        // A hint that lost to auto-detect (the stream moved to English) doesn't count, so the sticky language lets go.
+        var viaOpinion = (request.Hint != null && transcript.Language == request.Hint)
+                         || (transcript.Language is { } l && l != "en" && request.Plan.Languages.Contains(l));
         side.Tracker.Observe(transcript.Language, viaOpinion, request.Plan.Languages);
         if (HallucinationFilter.IsLikelyHallucination(transcript.Text, voicedSeconds)) return;
         Append(ChunkLines.Lines(transcript, map, speaker, map.MeetingTime(0)), notify);
@@ -462,7 +473,7 @@ public sealed class MeetingRecorder
         List<HeldChunk> waiting;
         lock (_gate) waiting = _hold.TakeAll();
         if (waiting.Count == 0 || _settings is not { } settings) return;
-        var deadline = DateTime.UtcNow.AddSeconds(FinalRetrySeconds);
+        var deadline = DateTime.UtcNow.AddSeconds(FinalRetryLimit);
         foreach (var chunk in waiting)
         {
             var notify = new List<Action>();
@@ -476,7 +487,7 @@ public sealed class MeetingRecorder
             }
             var request = RequestFor(chunk.Speaker, settings);
             var wav = AudioMath.Wav(AudioMath.Normalized(chunk.FloatSamples));
-            var result = await AttemptAsync(wav, request, FinalAttempts, CancellationToken.None).ConfigureAwait(false);
+            var result = await AttemptAsync(wav, request, FinalAttempts, CancellationToken.None, deadline).ConfigureAwait(false);
             lock (_gate)
             {
                 if (result.Transcript is { } transcript)

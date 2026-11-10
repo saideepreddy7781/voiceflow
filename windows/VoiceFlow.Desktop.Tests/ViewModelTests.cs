@@ -25,6 +25,17 @@ public class ViewModelTests
     }
 
     [Fact]
+    public void LeavingSettingsStopsTheMicrophoneTest()
+    {
+        var services = Services();
+        var shell = new ShellViewModel(services, Now);
+        shell.Navigate(Page.Settings);
+        services.Microphone.StartTest("");
+        shell.Navigate(Page.Home);
+        Assert.False(services.Microphone.IsTesting);
+    }
+
+    [Fact]
     public void HomeSearchFiltersAndShowsNoMatches()
     {
         var vm = new HomeViewModel(Services(), Now, () => { });
