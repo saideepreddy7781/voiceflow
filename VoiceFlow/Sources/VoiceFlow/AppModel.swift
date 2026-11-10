@@ -32,6 +32,8 @@ final class AppModel {
     var snippets: [Snippet] { didSet { snippetsFile.save(snippets) } }
     var notes: [Note] { didSet { notesFile.save(notes.filter { !$0.isBlank }) } }
     private(set) var history: [HistoryEntry]
+    /// Recent sessions as metadata only, for "Copy debug report".
+    let diagnostics: DiagnosticsLog
     var stats: UsageStats { UsageStats.compute(history) }
 
     // The Flow bar
@@ -53,11 +55,13 @@ final class AppModel {
 
     init() {
         OutputMuter.recoverAfterCrash()
-        preferences = preferenceStore.load()
+        let loaded = preferenceStore.load()
+        preferences = loaded
         dictionary = dictionaryFile.load() ?? []
         snippets = snippetsFile.load() ?? []
         notes = notesFile.load() ?? []
         history = historyFile.load() ?? []
+        diagnostics = DiagnosticsLog(file: JSONFile("diagnostics.json"), persists: loaded.historyRetentionDays != 0)
         controller = DictationController(model: self)
         notetaker = Notetaker(model: self)
         history = applyRetention(history, days: preferences.historyRetentionDays)
@@ -232,6 +236,7 @@ final class AppModel {
         if preferences.historyRetentionDays != old.historyRetentionDays {
             history = applyRetention(history, days: preferences.historyRetentionDays)
             historyFile.save(history)
+            diagnostics.persists = preferences.historyRetentionDays != 0
         }
         if preferences.launchAtLogin != old.launchAtLogin { applyLaunchAtLogin() }
         if preferences.showBarWhenIdle != old.showBarWhenIdle || preferences.onboarded != old.onboarded { updateFlowBarVisibility() }
@@ -268,6 +273,44 @@ final class AppModel {
     func clearHistory() {
         history = []
         historyFile.save(history)
+        diagnostics.clear()
+    }
+
+    // MARK: Debug report
+
+    func copyDebugReport() {
+        TextInserter.copyToClipboard(debugReport())
+    }
+
+    /// Everything here is metadata. See `DebugReport` for why nothing else can reach it.
+    private func debugReport() -> String {
+        var facts = DebugReport.Facts()
+        let info = Bundle.main.infoDictionary
+        facts.appVersion = info?["CFBundleShortVersionString"] as? String ?? "dev"
+        facts.buildNumber = info?["CFBundleVersion"] as? String ?? "dev"
+        facts.macOS = ProcessInfo.processInfo.operatingSystemVersionString
+        #if arch(arm64)
+        facts.architecture = "arm64"
+        #else
+        facts.architecture = "x86_64"
+        #endif
+        let devices = AudioDevices.inputDevices()
+        facts.inputDevices = devices.map(\.name)
+        facts.selectedInput = devices.first { $0.uid == preferences.inputDeviceUID }?.name
+        facts.defaultInput = AudioDevices.defaultInputName()
+        facts.defaultOutput = AudioDevices.defaultOutputName()
+        facts.hotkeyMode = "\(hotkeyMode)"
+        facts.microphoneAllowed = microphoneStatus == .authorized
+        facts.accessibilityAllowed = hasAccessibility
+        facts.inputMonitoringAllowed = hasInputMonitoring
+        facts.micState = "\(SharedMicrophone.shared.state)"
+        facts.micRestartsThisRun = SharedMicrophone.shared.restartCount
+        facts.meetingRecording = notetaker.isRecording
+        if notetaker.isRecording {
+            facts.meetingMicHealth = notetaker.micHealth
+            facts.meetingMicMissingSeconds = notetaker.micMissingSeconds
+        }
+        return DebugReport.render(facts, events: diagnostics.events, history: history)
     }
 
     /// Writes history, dictionary, snippets and notes to one JSON file the user chooses.

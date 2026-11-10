@@ -159,13 +159,17 @@ public struct HistoryEntry: Codable, Identifiable, Hashable, Sendable {
     public var latencyMs: Int
     /// "inserted", "pasted", "copied", "search", "answer", "failed".
     public var outcome: String
+    /// Why it ended this way. Nil for entries saved by older versions.
+    public var reason: DeliveryReason?
     /// Insights: usage category, words the cleanup changed, dictionary and snippet substitutions.
     public var usage: UsageCategory?
     public var wordsCorrected: Int?
     public var dictionaryFixes: Int?
     public var flagged: Bool?
 
-    public init(kind: Kind, appName: String, raw: String, final: String, audioSeconds: Double, latencyMs: Int, outcome: String) {
+    public init(kind: Kind, appName: String, raw: String, final: String, audioSeconds: Double, latencyMs: Int, outcome: String,
+                reason: DeliveryReason? = nil) {
+        self.reason = reason
         self.kind = kind
         self.appName = appName
         self.raw = raw

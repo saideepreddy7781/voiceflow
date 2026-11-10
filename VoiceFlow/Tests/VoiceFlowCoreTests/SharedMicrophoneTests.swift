@@ -182,6 +182,31 @@ struct SharedMicrophoneTests {
         #expect(mic.state == .stopped)
     }
 
+    @Test func aHealthRestartRebuildsTheEngineForEveryone() async throws {
+        let engine = FakeMicEngine()
+        let mic = makeMic(engine)
+        let meeting = AudioRecorder(microphone: mic)
+        try meeting.start(deviceUID: nil)
+        meeting.restartMicrophone()
+        await mic.recoveryTask?.value
+        #expect(engine.starts == 2 && mic.state == .running)
+        // A restart while one is already running is ignored.
+        engine.simulateConfigurationChange()
+        meeting.restartMicrophone()
+        await mic.recoveryTask?.value
+        #expect(engine.starts == 3)
+        engine.feed()
+        #expect(meeting.drain().count == 160)
+    }
+
+    @Test func restartWithNobodyListeningDoesNothing() {
+        let engine = FakeMicEngine()
+        let mic = makeMic(engine)
+        mic.restart()
+        #expect(engine.starts == 0)
+        #expect(mic.state == .stopped)
+    }
+
     @Test func aFailedStartDoesNotLeaveASubscriberBehind() throws {
         let engine = FakeMicEngine()
         let mic = makeMic(engine)

@@ -27,6 +27,9 @@ final class Notetaker {
     var lastError: String?
 
     var isRecording: Bool { state == .recording }
+    /// Whether the meeting's microphone is delivering usable audio, for the Meetings page.
+    private(set) var micHealth: MicHealthState = .healthy
+    var micMissingSeconds: Int { recorder.micMissingSeconds }
     var micLevel: Float { recorder.micLevel }
     var systemLevel: Float { recorder.systemLevel }
     /// Bumped every second while recording so level meters redraw.
@@ -100,6 +103,7 @@ final class Notetaker {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.levelTick &+= 1
+                self.updateMicHealth()
                 if !self.warnedSilentSystem, self.recorder.systemSilentSeconds >= 90, self.live?.micOnly == false {
                     self.warnedSilentSystem = true
                     self.model.pill.show("Not hearing the meeting audio",
@@ -109,6 +113,9 @@ final class Notetaker {
             }
         }
         state = .recording
+        // A dictation that started just before this may have muted the Mac.
+        model.controller.unmuteForMeeting()
+        micHealth = .healthy
         model.pill.meetingSince = startedAt
         lastError = recorder.lastError
         offeredForThisCall = true
@@ -118,6 +125,29 @@ final class Notetaker {
             model.pill.show("Notetaker is on", detail: "Let everyone on the call know you're taking notes.", seconds: 6)
         }
         log.info("Notetaker started: \(title, privacy: .private)")
+    }
+
+    /// Tells the user when the microphone stops delivering audio during a meeting. A dictation in progress
+    /// keeps its toast: this waits until it has finished.
+    private func updateMicHealth() {
+        let current = recorder.micHealth
+        guard current != micHealth, !model.controller.isBusy else { return }
+        let previous = micHealth
+        micHealth = current
+        model.diagnostics.record(DiagnosticEvent(session: .meeting, reason: current == .healthy ? .micRecovered : .micFailed,
+                                                 micRestarts: recorder.micRestartsRequested, duringMeeting: true))
+        switch current {
+        case .silent, .noAudio:
+            model.pill.show("Not hearing your microphone",
+                            detail: current == .silent
+                                ? "It is sending silence. If you didn't mute it, check the input in Settings → General. The meeting keeps recording."
+                                : "VoiceFlow lost your mic and couldn't get it back. Check the input in Settings → General. The meeting keeps recording.",
+                            action: .init(title: "Open") { WindowManager.shared.showSettings(.general) }, seconds: 12)
+        case .healthy:
+            if previous == .silent || previous == .noAudio { model.pill.show("Your microphone is back", seconds: 4) }
+        case .restarting:
+            break
+        }
     }
 
     func stop() {

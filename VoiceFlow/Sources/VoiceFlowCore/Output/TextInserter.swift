@@ -3,11 +3,25 @@ import ApplicationServices
 import Foundation
 
 public enum InsertResult: Equatable, Sendable {
-    case accessibility   // written directly into the field
-    case pasted          // clipboard + ⌘V
-    case copiedOnly      // no editable field; text left on the clipboard
-    case focusChanged    // the user switched apps meanwhile; text left on the clipboard
-    case blocked         // password field or excluded app; nothing typed, nothing copied
+    case accessibility      // written directly into the field and read back
+    case pastedVerified     // clipboard + ⌘V, and the field now shows the text
+    case pastedUnverified   // clipboard + ⌘V, and the field can't confirm it either way
+    case pasteNotLanded     // clipboard + ⌘V, but the readable field did not change
+    case copiedOnly         // no editable field; text left on the clipboard
+    case focusChanged       // the user switched apps or windows meanwhile; text left on the clipboard
+    case blocked            // password field or excluded app; nothing typed, nothing copied
+
+    public var reason: DeliveryReason {
+        switch self {
+        case .accessibility: .inserted
+        case .pastedVerified: .pastedVerified
+        case .pastedUnverified: .pastedUnverified
+        case .pasteNotLanded: .pasteNotLanded
+        case .copiedOnly: .copiedNoField
+        case .focusChanged: .copiedFocusChanged
+        case .blocked: .blocked
+        }
+    }
 }
 
 /// Puts text where the user is typing: write through Accessibility, check it landed, fall back to a
@@ -56,49 +70,100 @@ public enum TextInserter {
     }
 
     public static func insert(_ text: String, context: TypingContext) async -> InsertResult {
-        if context.isSecure || OutputSafety.isExcluded(bundleID: context.bundleID) || focusIsProtected() { return .blocked }
+        // Read off the main thread: an app that answers late must not freeze the Flow bar.
+        let focus = await Task.detached(priority: .userInitiated) { ContextReader.focusSnapshot() }.value
         let clean = OutputSafety.sanitize(text, forTerminal: OutputSafety.isTerminal(bundleID: context.bundleID))
-        guard !clean.isEmpty else { return .copiedOnly }
-        guard focusUnchanged(since: context) else {
+        var facts = InsertionFacts()
+        facts.contextIsSecure = context.isSecure
+        facts.contextIsExcluded = OutputSafety.isExcluded(bundleID: context.bundleID)
+        facts.focusIsProtected = focus.isSecure || focusIsProtected()
+        facts.contextPID = context.pid
+        facts.frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        facts.windowChanged = windowChanged(from: context.focusedWindow, to: focus.window)
+        facts.elementIsEditable = focus.element != nil && focus.isEditable
+        facts.pasteFirst = pasteFirst.contains(context.bundleID)
+        facts.textIsEmpty = clean.isEmpty
+
+        let plan = InsertionPolicy.plan(facts)
+        switch plan {
+        case .block:
+            return .blocked
+        case .copyNoField:
+            if !clean.isEmpty { copyToClipboard(clean) }
+            return .copiedOnly
+        case .copyFocusChanged:
             copyToClipboard(clean)
             return .focusChanged
+        case .writeThenPaste, .paste:
+            break
         }
-        if !context.isEditable && context.role.isEmpty {
-            copyToClipboard(clean)
-            return .copiedOnly
-        }
-        let final = withLeadingSpace(clean, beforeCursor: context.beforeCursor)
-        if context.isEditable, !pasteFirst.contains(context.bundleID),
-           let element = ContextReader.focusedElement(), await writeThroughAccessibility(final, element: element) {
+        let final = withLeadingSpace(clean, beforeCursor: focus.beforeCursor ?? context.beforeCursor)
+        if plan == .writeThenPaste, let element = focus.element, await writeThroughAccessibility(final, element: element) {
             return .accessibility
         }
-        if context.isEditable || !context.role.isEmpty {
-            await paste(final)
-            return .pasted
+        // The write above can take time: check again right before the keystroke.
+        if focusIsProtected() { return .blocked }
+        let before = focus.value
+        await paste(final)
+        return await confirmPaste(final, before: before, element: focus.element)
+    }
+
+    /// Unknown windows count as unchanged: a nil answer from Accessibility must never look like a switch.
+    private static func windowChanged(from old: AXReference?, to new: AXReference?) -> Bool {
+        guard let old, let new else { return false }
+        return !old.isSameElement(as: new)
+    }
+
+    /// Reads the field back after a paste. Slow apps get one more look before it counts as not landed.
+    private static func confirmPaste(_ text: String, before: String?, element: AXUIElement?) async -> InsertResult {
+        guard let element else { return .pastedUnverified }
+        var verification = InsertionPolicy.verifyPaste(before: before, after: ContextReader.value(of: element), inserted: text)
+        if verification != .landed {
+            try? await Task.sleep(for: .milliseconds(250))
+            verification = InsertionPolicy.verifyPaste(before: before, after: ContextReader.value(of: element), inserted: text)
         }
-        copyToClipboard(clean)
-        return .copiedOnly
+        switch verification {
+        case .landed: return .pastedVerified
+        case .notLanded: return .pasteNotLanded
+        case .unknown: return .pastedUnverified
+        }
+    }
+
+    /// Pastes into whatever has focus, for the Flow bar's Paste button and the paste-last shortcut.
+    /// Returns false, without typing, when focus is protected.
+    @discardableResult
+    public static func pasteIfAllowed(_ text: String) async -> Bool {
+        guard !focusIsProtected() else { return false }
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        await paste(OutputSafety.sanitize(text, forTerminal: OutputSafety.isTerminal(bundleID: front)))
+        return true
     }
 
     /// Replaces the whole field value (Command Mode with no selection). Same safety rules as `insert`.
     public static func replaceAll(_ text: String, context: TypingContext) async -> InsertResult {
         if context.isSecure || OutputSafety.isExcluded(bundleID: context.bundleID) || focusIsProtected() { return .blocked }
         let clean = OutputSafety.sanitize(text, forTerminal: OutputSafety.isTerminal(bundleID: context.bundleID))
-        guard focusUnchanged(since: context) else {
+        let focus = await Task.detached(priority: .userInitiated) { ContextReader.focusSnapshot() }.value
+        guard focusUnchanged(since: context), !windowChanged(from: context.focusedWindow, to: focus.window) else {
             copyToClipboard(clean)
             return .focusChanged
         }
-        guard let element = ContextReader.focusedElement() else { return .copiedOnly }
+        guard let element = focus.element ?? ContextReader.focusedElement() else {
+            copyToClipboard(clean)
+            return .copiedOnly
+        }
         if ContextReader.isSettable(element, kAXValueAttribute),
            AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, clean as CFString) == .success {
             try? await Task.sleep(for: .milliseconds(60))
             if ContextReader.value(of: element) == clean { return .accessibility }
         }
+        if focusIsProtected() { return .blocked }
         // Select all, then paste over it.
         postKey(0, flags: .maskCommand) // ⌘A
         try? await Task.sleep(for: .milliseconds(60))
+        let before = ContextReader.value(of: element)
         await paste(clean)
-        return .pasted
+        return await confirmPaste(clean, before: before, element: element)
     }
 
     static func writeThroughAccessibility(_ text: String, element: AXUIElement) async -> Bool {

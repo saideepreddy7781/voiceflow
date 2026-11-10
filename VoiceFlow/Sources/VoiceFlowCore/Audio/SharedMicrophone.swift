@@ -116,7 +116,7 @@ public final class SharedMicrophone {
 
     /// Rebuilds the engine for a stalled microphone. Subscribers stay attached.
     public func restart() {
-        guard !subscriptions.isEmpty else { return }
+        guard !subscriptions.isEmpty, state != .recovering else { return }
         scheduleRecovery(reason: "stalled")
     }
 
@@ -150,6 +150,7 @@ public final class SharedMicrophone {
                     self.log.notice("Microphone engine rebuilt")
                     return
                 } catch {
+                    self.state = .recovering
                     self.log.error("Microphone rebuild failed: \(String(describing: error), privacy: .public)")
                 }
             }

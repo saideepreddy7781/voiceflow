@@ -347,6 +347,7 @@ private struct PrivacySettings: View {
 
 private struct AdvancedSettings: View {
     @Bindable var model: AppModel
+    @State private var debugReportCopied = false
 
     var body: some View {
         SettingsGroup("Features") {
@@ -364,6 +365,17 @@ private struct AdvancedSettings: View {
             Picker("Command Mode", selection: $model.preferences.commandModel) {
                 ForEach(Groq.textModels, id: \.self) { Text($0).tag($0) }
             }
+        }
+        SettingsGroup("Troubleshooting") {
+            HStack {
+                Button("Copy debug report") {
+                    model.copyDebugReport()
+                    debugReportCopied = true
+                }
+                if debugReportCopied { Text("Copied").foregroundStyle(.secondary) }
+            }
+            Text("Versions, device names, recent results and timings, to paste into a bug report. It has no transcripts, window titles or API keys.")
+                .font(.callout).foregroundStyle(.secondary)
         }
         SettingsGroup("Setup") {
             Button("Run setup again") { WindowManager.shared.showOnboarding() }

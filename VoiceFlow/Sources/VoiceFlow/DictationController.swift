@@ -7,6 +7,10 @@ import VoiceFlowCore
 /// Runs one dictation or command from hotkey press to inserted text.
 ///
 /// Fallback chain, so speech is never lost: cleaned text → raw transcript → clipboard + Flow bar.
+///
+/// A dictation during a meeting shares the meeting's microphone, so its words are recorded in the meeting
+/// too. That keeps one uninterrupted mic stream and is the simplest honest behaviour: what you say out loud
+/// during a call is in the call's audio.
 @MainActor
 final class DictationController {
     private unowned let model: AppModel
@@ -50,6 +54,7 @@ final class DictationController {
             model.resetHotkeySession()
             return
         }
+        context = TypingContext()
         guard model.hasGroqKey else {
             fail("Add your Groq key to start dictating.", action: .init(title: "Open Settings") { WindowManager.shared.showSettings(.keys) })
             return
@@ -59,14 +64,17 @@ final class DictationController {
         case .notDetermined:
             model.requestMicrophone()
             fail("Allow microphone access, then try again.")
+            report(.micFailed, kind: kind)
             return
         default:
+            report(.micFailed, kind: kind)
             fail("Microphone access is off.", action: .init(title: "Open Settings") { self.model.openPrivacyPane("Privacy_Microphone") })
             return
         }
 
         if OutputSafety.secureInputActive() {
             fail("Secure input is on (a password prompt or Secure Keyboard Entry), so VoiceFlow won't listen.")
+            report(.blocked, kind: kind)
             return
         }
         let prefs = model.preferences
@@ -74,6 +82,7 @@ final class DictationController {
             try recorder.start(deviceUID: prefs.inputDeviceUID.isEmpty ? nil : prefs.inputDeviceUID)
         } catch {
             fail("\(error)")
+            report(.micFailed, kind: kind)
             return
         }
         self.kind = kind
@@ -83,14 +92,14 @@ final class DictationController {
         cutter = SegmentCutter()
         segments = []
         blockedField = false
-        context = TypingContext()
         whisperPrompt = NameExtractor.whisperPrompt(dictionary: model.dictionaryTerms, names: [])
         Sounds.start(prefs.playSounds)
         if prefs.muteAudioWhileDictating && !model.notetaker.isRecording {
             // After the start cue has played, so the cue itself is not muted.
             Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(250))
-                if self?.recorder.isRecording == true { self?.muter.mute() }
+                guard let self, self.recorder.isRecording, !self.model.notetaker.isRecording else { return }
+                self.muter.mute()
             }
         }
         model.pill.set(kind == .command ? .command : .listening)
@@ -109,6 +118,7 @@ final class DictationController {
                     self.stopCapture()
                     self.model.resetHotkeySession()
                     self.model.pill.show("VoiceFlow doesn't listen in password fields", seconds: 3)
+                    self.report(.blocked)
                 }
                 return
             }
@@ -139,29 +149,40 @@ final class DictationController {
 
     func cancel() {
         guard recorder.isRecording else { return }
+        let restarts = recorder.restarts
         stopCapture()
         segments.forEach { $0.cancel() }
         segments = []
         model.pill.set(.idle)
+        report(.cancelled, audioSeconds: Date().timeIntervalSince(startedAt), restarts: restarts)
         log.info("Session cancelled")
     }
 
     func finish() {
         guard recorder.isRecording else { return }
+        let restarts = recorder.restarts
+        let heldSeconds = Date().timeIntervalSince(startedAt)
         let samples = stopCapture()
         let audioSeconds = Double(samples.count) / AudioMath.sampleRate
         let voiced = AudioMath.voicedSeconds(samples)
-        if audioSeconds < 0.5 {
-            // Too short to be speech: drop it quietly.
+        let verdict = AudioMath.captureVerdict(samples, heldSeconds: heldSeconds)
+        if verdict != .speech {
             segments.forEach { $0.cancel() }
             segments = []
-            model.pill.set(.idle)
-            return
-        }
-        if AudioMath.isSilent(samples) {
-            segments.forEach { $0.cancel() }
-            segments = []
-            model.pill.show("No speech heard", detail: audioSeconds > 1 ? "Check your microphone in Settings → Audio." : "", seconds: 1.5)
+            switch verdict {
+            case .tooShort:
+                // Too short to be speech: drop it quietly.
+                model.pill.set(.idle)
+                report(.tooShort, audioSeconds: audioSeconds, restarts: restarts)
+            case .noAudio, .digitalSilence:
+                Sounds.error(model.preferences.playSounds)
+                model.pill.show("Your microphone sent no audio", detail: "Check the input in Settings → General.",
+                                action: .init(title: "Open") { WindowManager.shared.showSettings(.general) }, seconds: 6)
+                report(.micFailed, audioSeconds: audioSeconds, restarts: restarts)
+            default:
+                model.pill.show("No speech heard", detail: audioSeconds > 1 ? "Check your microphone in Settings → General." : "", seconds: 1.5)
+                report(.noSpeech, audioSeconds: audioSeconds, restarts: restarts)
+            }
             return
         }
         let kind = kind
@@ -178,6 +199,7 @@ final class DictationController {
                 self.segments.forEach { $0.cancel() }
                 self.segments = []
                 self.model.pill.show("VoiceFlow doesn't type into password fields", seconds: 3)
+                self.report(.blocked, audioSeconds: audioSeconds, restarts: restarts)
                 return
             }
             if let finalRange { self.startSegment(Array(samples[finalRange])) }
@@ -189,27 +211,30 @@ final class DictationController {
                 let transcript = SegmentCutter.join(parts)
                 if HallucinationFilter.isLikelyHallucination(transcript, voicedSeconds: voiced) {
                     self.model.pill.show("No speech heard", seconds: 1.5)
+                    self.report(.noSpeech, audioSeconds: audioSeconds, restarts: restarts)
                     return
                 }
                 switch kind {
                 case .dictation:
-                    await self.deliverDictation(transcript, context: context, audioSeconds: audioSeconds, began: began)
+                    await self.deliverDictation(transcript, context: context, audioSeconds: audioSeconds, began: began, restarts: restarts)
                 case .command:
-                    await self.runCommand(transcript, context: context, audioSeconds: audioSeconds, began: began)
+                    await self.runCommand(transcript, context: context, audioSeconds: audioSeconds, began: began, restarts: restarts)
                 }
             } catch {
                 self.log.error("Transcription failed: \(String(describing: error), privacy: .private)")
                 Sounds.error(self.model.preferences.playSounds)
                 self.model.pill.show("Transcription failed", detail: "\(error)", seconds: 6)
                 self.model.record(HistoryEntry(kind: kind == .command ? .command : .dictation, appName: self.context.appName,
-                                               raw: "", final: "", audioSeconds: audioSeconds, latencyMs: 0, outcome: "failed"))
+                                               raw: "", final: "", audioSeconds: audioSeconds, latencyMs: 0, outcome: "failed",
+                                               reason: .transcriptionFailed))
+                self.report(.transcriptionFailed, audioSeconds: audioSeconds, restarts: restarts)
             }
         }
     }
 
     // MARK: Delivery
 
-    private func deliverDictation(_ transcript: String, context: TypingContext, audioSeconds: Double, began: Date) async {
+    private func deliverDictation(_ transcript: String, context: TypingContext, audioSeconds: Double, began: Date, restarts: Int) async {
         let prefs = model.preferences
         var final: String
         var note: String?
@@ -253,26 +278,33 @@ final class DictationController {
         let result = await TextInserter.insert(final, context: context)
         let latency = Int(Date().timeIntervalSince(began) * 1000)
         Sounds.done(prefs.playSounds)
+        if let note { log.notice("Cleanup skipped: \(note, privacy: .private)") }
         switch result {
-        case .accessibility, .pasted:
-            if let note { log.notice("Cleanup skipped: \(note, privacy: .private)") }
+        case .accessibility, .pastedVerified:
             model.pill.set(.idle)
             scheduleAutoLearn(inserted: final, context: context)
+        case .pastedUnverified:
+            offerPaste("Pasted, but couldn't confirm it", text: final, seconds: 3)
+            scheduleAutoLearn(inserted: final, context: context)
+        case .pasteNotLanded:
+            offerPaste("Didn't reach that field", detail: String(final.prefix(140)), text: final, seconds: 6)
         case .copiedOnly:
-            model.pill.show("No text field. Copied to clipboard", detail: String(final.prefix(140)), seconds: 5)
+            offerPaste("No text field. Copied to clipboard", detail: String(final.prefix(140)), text: final, seconds: 5)
         case .focusChanged:
-            model.pill.show("You switched apps, so it was copied instead", detail: String(final.prefix(140)), seconds: 5)
+            offerPaste("You switched apps, so it was copied instead", detail: String(final.prefix(140)), text: final, seconds: 5)
         case .blocked:
             model.pill.show("Not typed: password field or secure input is active", seconds: 3)
+            report(.blocked, audioSeconds: audioSeconds, latencyMs: latency, restarts: restarts)
             return
         }
         let outcome = switch result {
         case .accessibility: "inserted"
-        case .pasted: "pasted"
+        case .pastedVerified, .pastedUnverified, .pasteNotLanded: "pasted"
         default: "copied"
         }
+        report(result.reason, audioSeconds: audioSeconds, latencyMs: latency, restarts: restarts)
         var entry = HistoryEntry(kind: .dictation, appName: context.appName, raw: transcript, final: final,
-                                 audioSeconds: audioSeconds, latencyMs: latency, outcome: outcome)
+                                 audioSeconds: audioSeconds, latencyMs: latency, outcome: outcome, reason: result.reason)
         entry.usage = usage
         entry.wordsCorrected = HistoryEntry.wordsChanged(raw: transcript, final: final)
         entry.dictionaryFixes = dictionaryFixes
@@ -280,7 +312,7 @@ final class DictationController {
         log.info("Dictation delivered in \(latency) ms via \(String(describing: result), privacy: .public)")
     }
 
-    private func runCommand(_ instruction: String, context: TypingContext, audioSeconds: Double, began: Date) async {
+    private func runCommand(_ instruction: String, context: TypingContext, audioSeconds: Double, began: Date, restarts: Int) async {
         guard let key = await model.keyAsync() else {
             model.pill.show("Add your Groq key to use Command Mode.", seconds: 4)
             return
@@ -297,6 +329,7 @@ final class DictationController {
             let result = try await runner.run(app: ctx.appName, fullText: ctx.fullText, selectedText: ctx.selectedText, instruction: instruction)
             let latency = Int(Date().timeIntervalSince(began) * 1000)
             var outcome = "inserted"
+            var reason: DeliveryReason?
             var output = ""
             switch result {
             case .replace(let text):
@@ -311,10 +344,15 @@ final class DictationController {
                     r = .copiedOnly
                     outcome = "failed"
                 }
-                if outcome != "failed" { outcome = handleCommandInsert(r, text: text) }
+                if outcome != "failed" {
+                    outcome = handleCommandInsert(r, text: text)
+                    reason = r.reason
+                }
             case .insert(let text):
                 output = text
-                outcome = handleCommandInsert(await TextInserter.insert(text, context: ctx), text: text)
+                let r = await TextInserter.insert(text, context: ctx)
+                outcome = handleCommandInsert(r, text: text)
+                reason = r.reason
             case .search(let query):
                 output = query
                 NSWorkspace.shared.open(CommandPrompt.searchURL(query))
@@ -327,29 +365,51 @@ final class DictationController {
             }
             lastResult = output
             Sounds.done(model.preferences.playSounds)
+            if let reason { report(reason, audioSeconds: audioSeconds, latencyMs: latency, restarts: restarts) }
             model.record(HistoryEntry(kind: .command, appName: ctx.appName, raw: instruction, final: output,
-                                      audioSeconds: audioSeconds, latencyMs: latency, outcome: outcome))
+                                      audioSeconds: audioSeconds, latencyMs: latency, outcome: outcome, reason: reason))
         } catch {
             Sounds.error(model.preferences.playSounds)
             model.pill.show("Command failed", detail: "\(error)", seconds: 6)
+            report(.transcriptionFailed, audioSeconds: audioSeconds, restarts: restarts)
         }
     }
 
     /// Reports a Command Mode insertion and returns the history outcome.
     private func handleCommandInsert(_ result: InsertResult, text: String) -> String {
         switch result {
-        case .accessibility, .pasted:
+        case .accessibility, .pastedVerified:
             offerUndo()
             return "inserted"
+        case .pastedUnverified:
+            offerUndo()
+            return "pasted"
+        case .pasteNotLanded:
+            offerPaste("Didn't reach that field", detail: String(text.prefix(140)), text: text, seconds: 6)
+            return "copied"
         case .copiedOnly:
-            model.pill.show("No text field. Copied to clipboard", detail: String(text.prefix(140)), seconds: 5)
+            offerPaste("No text field. Copied to clipboard", detail: String(text.prefix(140)), text: text, seconds: 5)
             return "copied"
         case .focusChanged:
-            model.pill.show("You switched apps, so it was copied instead", detail: String(text.prefix(140)), seconds: 5)
+            offerPaste("You switched apps, so it was copied instead", detail: String(text.prefix(140)), text: text, seconds: 5)
             return "copied"
         case .blocked:
             model.pill.show("VoiceFlow doesn't type into password fields", seconds: 3)
             return "failed"
+        }
+    }
+
+    /// Offers one click to type `text` into whatever has focus now.
+    private func offerPaste(_ message: String, detail: String = "", text: String, seconds: Double) {
+        model.pill.show(message, detail: detail, action: .init(title: "Paste") { self.paste(text) }, seconds: seconds)
+    }
+
+    private func paste(_ text: String) {
+        model.pill.dismissMessage()
+        Task {
+            if await !TextInserter.pasteIfAllowed(text) {
+                model.pill.show("VoiceFlow doesn't type into password fields", seconds: 3)
+            }
         }
     }
 
@@ -366,6 +426,11 @@ final class DictationController {
         muter.restore()
     }
 
+    /// A meeting has started while this dictation was muting the Mac: the call's audio must be heard.
+    func unmuteForMeeting() {
+        muter.restore()
+    }
+
     // MARK: Shortcuts
 
     func pasteLast() {
@@ -373,13 +438,7 @@ final class DictationController {
             model.pill.show("Nothing to paste yet", seconds: 1.5)
             return
         }
-        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        if OutputSafety.isExcluded(bundleID: front) {
-            model.pill.show("VoiceFlow doesn't type into password managers", seconds: 3)
-            return
-        }
-        let clean = OutputSafety.sanitize(text, forTerminal: OutputSafety.isTerminal(bundleID: front))
-        Task { await TextInserter.paste(clean) }
+        paste(text)
     }
 
     func copyLast() {
@@ -450,6 +509,14 @@ final class DictationController {
                                                              parallelLanguage: prefs.parallelLanguage,
                                                              languages: prefs.languages, prompt: prompt).text
         })
+    }
+
+    /// Adds this session to the debug log. Metadata only: nothing said, typed or shown on screen.
+    private func report(_ reason: DeliveryReason, kind: SessionKind? = nil, audioSeconds: Double = 0, latencyMs: Int = 0, restarts: Int = 0) {
+        let bundleID = context.bundleID.isEmpty ? (NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "") : context.bundleID
+        model.diagnostics.record(DiagnosticEvent(session: (kind ?? self.kind) == .command ? .command : .dictation, reason: reason, bundleID: bundleID,
+                                                 audioSeconds: audioSeconds, latencyMs: latencyMs, micRestarts: restarts,
+                                                 duringMeeting: model.notetaker.isRecording))
     }
 
     private func fail(_ message: String, action: PillState.Action? = nil) {

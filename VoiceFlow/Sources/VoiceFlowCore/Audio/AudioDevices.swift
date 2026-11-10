@@ -25,6 +25,20 @@ public enum AudioDevices {
         }
     }
 
+    /// The system's default input and output device names (for the debug report).
+    public static func defaultInputName() -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id) == noErr, id != 0 else { return nil }
+        return stringProperty(id, kAudioObjectPropertyName)
+    }
+
+    public static func defaultOutputName() -> String? {
+        defaultOutputDevice().flatMap { stringProperty($0, kAudioObjectPropertyName) }
+    }
+
     static func uid(of id: AudioObjectID) -> String? { stringProperty(id, kAudioDevicePropertyDeviceUID) }
 
     /// True while any app is using the default microphone (a call is likely in progress).

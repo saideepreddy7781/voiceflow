@@ -29,7 +29,8 @@ VoiceFlow shows when a call starts). A red chip with a timer stays on screen the
 | A Markdown copy of each meeting | Only the folder you choose under Settings → Notetaker → Sync |
 | Calendar: the title and attendee names of the event happening now | Read on this Mac, only if you turn on "Use my calendar" |
 
-Audio is never written to disk. Recording other people can require their consent where you live:
+If you dictate during a meeting, those words are part of your microphone audio, so they also appear in
+the meeting transcript. Audio is never written to disk. Recording other people can require their consent where you live:
 tell everyone on the call. VoiceFlow reminds you each time unless you turn the reminder off.
 
 ## Sent to Perplexity
@@ -52,7 +53,8 @@ Only when Command Mode decides your instruction is a web search ("search for…"
 ## The clipboard
 
 When VoiceFlow has to paste, it puts the text on the clipboard for a moment, presses ⌘V, then puts your
-previous clipboard back after 500 ms. That temporary item stays on this Mac (it is not sent to your
+previous clipboard back after 500 ms. After pasting it reads the field once or twice to see whether the
+text arrived. That read is compared on this Mac and never saved or sent. That temporary item stays on this Mac (it is not sent to your
 other devices by Universal Clipboard) and is marked so clipboard-history apps skip it. If your
 clipboard held a password copied from a password manager, VoiceFlow does not put it back.
 
@@ -68,8 +70,14 @@ All files are in `~/Library/Application Support/VoiceFlow/`, readable only by yo
 | `snippets.json` | Snippet cues and text | Hub → Snippets |
 | `notes.json` | Scratchpad notes | Hub → Scratchpad |
 | `meetings.json` | Meeting transcripts and notes | Hub → Meetings |
+| `diagnostics.json` | The last 200 sessions as metadata only: date, result code, app bundle ID, audio length, timing, microphone restarts. Never what you said, typed or saw | Emptied by "Delete all history"; not written at all when you choose "Never store my data" |
 
-Settings → Data & Privacy → **Export my data** writes all of these to one JSON file you choose.
+Settings → Data & Privacy → **Export my data** writes all of these except `diagnostics.json` to one JSON
+file you choose.
+
+Settings → Advanced → **Copy debug report** puts a text report on your clipboard for bug reports: app and
+macOS versions, audio device names (with any owner name removed), result codes, timings and microphone
+restart counts. It has no transcripts, window titles or API keys, and nothing is sent anywhere unless you paste it.
 
 Settings live in `~/Library/Preferences/com.saideep.voiceflow.plist`. The Groq key is in your login
 Keychain under "com.saideep.voiceflow". Audio is never written to disk.

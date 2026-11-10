@@ -147,6 +147,7 @@ private struct LiveMeetingView: View {
                 Label("Recording your microphone only. Allow system audio recording in Settings → Notetaker to capture the other people.",
                       systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
             }
+            micBanner
             HStack(spacing: 24) {
                 InputLevel(label: "You (microphone)", level: notetaker.micLevel, tick: notetaker.levelTick)
                 if !meeting.micOnly {
@@ -158,6 +159,21 @@ private struct LiveMeetingView: View {
             TranscriptList(lines: meeting.lines)
         }
         .padding(24)
+    }
+}
+
+private extension LiveMeetingView {
+    @ViewBuilder var micBanner: some View {
+        switch notetaker.micHealth {
+        case .healthy:
+            EmptyView()
+        case .restarting:
+            Label("Your microphone stopped sending audio. Restarting it…", systemImage: "arrow.clockwise").font(.callout).foregroundStyle(.orange)
+        case .silent:
+            Label("Your microphone is sending silence. Your side of the call isn't being recorded.", systemImage: "mic.slash").font(.callout).foregroundStyle(.orange)
+        case .noAudio:
+            Label("VoiceFlow can't get audio from your microphone. Your side of the call isn't being recorded.", systemImage: "mic.slash").font(.callout).foregroundStyle(.red)
+        }
     }
 }
 
@@ -179,6 +195,9 @@ private struct MeetingDetail: View {
                     Text("· \(max(1, Int((meeting.duration / 60).rounded()))) min")
                     if !meeting.app.isEmpty { Text("· \(meeting.app)") }
                     if meeting.micOnly { Text("· your mic only").foregroundStyle(.orange) }
+                    if let missing = meeting.micMissingSeconds, missing >= 30 {
+                        Text("· mic missing for \(max(1, missing / 60)) min").foregroundStyle(.orange)
+                    }
                 }
                 .font(.callout).foregroundStyle(.secondary)
                 if !meeting.attendees.isEmpty {

@@ -20,10 +20,34 @@ public struct TypingContext: Sendable {
     public var selectedText: String = ""
     /// The whole field value, capped at 20,000 characters (Command Mode).
     public var fullText: String = ""
+    /// The focused window when the dictation started, to notice a switch within the same app.
+    public var focusedWindow: AXReference?
 
     public init() {}
 
     public var hasSelection: Bool { !selectedText.isEmpty }
+}
+
+/// An Accessibility element carried between threads. AXUIElement is a thread-safe CF object.
+public struct AXReference: @unchecked Sendable {
+    public let element: AXUIElement
+    public init(_ element: AXUIElement) { self.element = element }
+
+    public func isSameElement(as other: AXReference) -> Bool { CFEqual(element, other.element) }
+}
+
+/// The focused field as read just before typing.
+public struct FocusSnapshot: @unchecked Sendable {
+    public var element: AXUIElement?
+    public var window: AXReference?
+    public var role = ""
+    public var isSecure = false
+    public var isEditable = false
+    /// Nil when the field's contents can't be read.
+    public var value: String?
+    public var beforeCursor: String?
+
+    public init() {}
 }
 
 /// Reads `TypingContext` from the focused element. Each AX call times out after 250 ms so a hung
@@ -32,7 +56,27 @@ public enum ContextReader {
     private static let timeout: Float = 0.25
     private static let electronApps = ["com.tinyspeck.slackmacgap", "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92",
                                         "com.exafunction.windsurf", "com.hnc.Discord", "notion.id", "com.figma.Desktop",
-                                        "net.whatsapp.WhatsApp", "com.microsoft.teams2", "md.obsidian", "com.linear"]
+                                        "net.whatsapp.WhatsApp", "desktop.WhatsApp", "com.microsoft.teams2", "md.obsidian",
+                                        "com.linear", "com.microsoft.edgemac", "company.thebrowser.Browser"]
+    private static let retryDelay: useconds_t = 120_000
+
+    /// Electron and Chromium apps only expose their text to Accessibility when asked.
+    static func needsManualAccessibility(bundleID: String) -> Bool {
+        electronApps.contains(bundleID) || bundleID.hasPrefix("com.google.Chrome") || bundleID.hasPrefix("com.brave")
+    }
+
+    /// Reads the focused element, retrying when an app that just had Accessibility switched on answers
+    /// late. Blocks while waiting: call off the main thread.
+    static func awaitFocusedElement(_ appElement: AXUIElement, attempts: Int = 3) -> AXUIElement? {
+        var element = focusedElement(appElement)
+        var tries = 1
+        while tries < attempts, element == nil || (attribute(element!, kAXRoleAttribute) as String?)?.isEmpty != false {
+            usleep(retryDelay)
+            element = focusedElement(appElement) ?? element
+            tries += 1
+        }
+        return element
+    }
 
     public static func read() -> TypingContext {
         var ctx = TypingContext()
@@ -48,25 +92,24 @@ public enum ContextReader {
 
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, timeout)
-        // Electron and Chromium apps only expose their text to Accessibility when asked.
-        if electronApps.contains(ctx.bundleID) || ctx.bundleID.hasPrefix("com.google.Chrome") || ctx.bundleID.hasPrefix("com.brave") {
+        if needsManualAccessibility(bundleID: ctx.bundleID) {
             AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         }
 
         if let window: AXUIElement = attribute(appElement, kAXFocusedWindowAttribute) {
+            ctx.focusedWindow = AXReference(window)
             ctx.windowTitle = attribute(window, kAXTitleAttribute) ?? ""
             if let doc: String = attribute(window, kAXDocumentAttribute) { ctx.documentPath = URL(string: doc)?.path ?? doc }
         }
 
-        guard let element = focusedElement(appElement) else { return ctx }
+        guard let element = awaitFocusedElement(appElement) else { return ctx }
         AXUIElementSetMessagingTimeout(element, timeout)
         ctx.role = attribute(element, kAXRoleAttribute) ?? ""
         let subrole: String = attribute(element, kAXSubroleAttribute) ?? ""
         ctx.isSecure = subrole == (kAXSecureTextFieldSubrole as String)
         if ctx.isSecure { return ctx }
 
-        ctx.isEditable = isSettable(element, kAXValueAttribute) || isSettable(element, kAXSelectedTextAttribute)
-            || ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(ctx.role)
+        ctx.isEditable = isEditable(element, role: ctx.role)
 
         let value: String = attribute(element, kAXValueAttribute) ?? ""
         ctx.selectedText = attribute(element, kAXSelectedTextAttribute) ?? ""
@@ -82,6 +125,42 @@ public enum ContextReader {
             ctx.excerpt = String(value.suffix(2_000))
         }
         return ctx
+    }
+
+    static func isEditable(_ element: AXUIElement, role: String) -> Bool {
+        isSettable(element, kAXValueAttribute) || isSettable(element, kAXSelectedTextAttribute)
+            || ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(role)
+    }
+
+    /// The focused field right now, read just before typing. Blocks while retrying: call off the main thread.
+    public static func focusSnapshot() -> FocusSnapshot {
+        var snapshot = FocusSnapshot()
+        guard let app = NSWorkspace.shared.frontmostApplication else { return snapshot }
+        let bundleID = app.bundleIdentifier ?? ""
+        // Password managers: never read anything.
+        if OutputSafety.isExcluded(bundleID: bundleID) {
+            snapshot.isSecure = true
+            return snapshot
+        }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, timeout)
+        if needsManualAccessibility(bundleID: bundleID) {
+            AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        }
+        if let window: AXUIElement = attribute(appElement, kAXFocusedWindowAttribute) { snapshot.window = AXReference(window) }
+        guard let element = awaitFocusedElement(appElement) else { return snapshot }
+        AXUIElementSetMessagingTimeout(element, timeout)
+        snapshot.element = element
+        snapshot.role = attribute(element, kAXRoleAttribute) ?? ""
+        snapshot.isSecure = isSecure(element)
+        if snapshot.isSecure { return snapshot }
+        snapshot.isEditable = isEditable(element, role: snapshot.role)
+        snapshot.value = value(of: element)
+        if let value = snapshot.value, let range = selectedRange(element), range.location >= 0, range.location <= (value as NSString).length {
+            let beforeStart = max(0, range.location - 120)
+            snapshot.beforeCursor = (value as NSString).substring(with: NSRange(location: beforeStart, length: range.location - beforeStart))
+        }
+        return snapshot
     }
 
     /// Title of the frontmost app's focused window (meeting detection in browsers).
