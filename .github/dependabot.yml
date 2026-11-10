@@ -1,0 +1,20 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: nuget
+    directory: /windows
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: swift
+    directory: /VoiceFlow
+    schedule:
+      interval: weekly

@@ -18,7 +18,7 @@ app. What is shared is everything that does not touch the OS.
 | Insert text | | AX write, or ⌘V with clipboard restore | `SendInput` Ctrl+V (Shift+Insert in terminals) with clipboard restore | AT-SPI / `wtype` / `xdotool` |
 | Secret storage | | Keychain | Windows Credential Manager | libsecret |
 | Floating bar | | NSPanel (non-activating) | WinForms topmost tool window, `WS_EX_NOACTIVATE` | Layer-shell / override-redirect |
-| Packaging | | Universal DMG (notarized once a Developer ID is set up) | Single self-contained `.exe` per architecture (Authenticode signing planned) | AppImage / Flatpak |
+| Packaging | | Universal DMG, self-signed or ad hoc, not notarized (see [RELEASING.md](RELEASING.md)) | Single self-contained `.exe` per architecture, unsigned | AppImage / Flatpak |
 
 ## Windows stack
 
@@ -37,7 +37,7 @@ Windows specifics handled in the app:
 ## Next steps
 
 1. Windows: meeting detection, Scratchpad, Insights, text before the cursor, auto-learning.
-2. Signing on both platforms (see [RELEASING.md](RELEASING.md)).
+2. Windows code signing through a free program for open-source projects (see [RELEASING.md](RELEASING.md)).
 3. Move the prompts into shared files that both builds embed, instead of the parity check.
 
 ## Mobile

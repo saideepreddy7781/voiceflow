@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest something new.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the situation first. A concrete example is more useful than a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: What you'd like VoiceFlow to do, if you have an idea.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - macOS
+        - Windows
+    validations:
+      required: true

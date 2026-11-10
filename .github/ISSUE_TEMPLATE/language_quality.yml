@@ -1,0 +1,53 @@
+name: Language quality report
+description: Wrong words, the wrong language, or cleanup that changed what you meant.
+labels: [language]
+body:
+  - type: input
+    id: language
+    attributes:
+      label: Language you spoke
+      placeholder: Telugu, Telugu-English mix, Hindi, English with an Indian accent, ...
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Debug report
+      description: >-
+        In VoiceFlow, open Settings, click "Copy debug report" and paste it here. It doesn't include anything
+        you dictated. If your version doesn't have that button, write your version and your language settings.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: >-
+        What you said, in as close to your own words as you can, and what appeared. Change anything private
+        before posting. Don't attach audio of other people.
+      placeholder: |
+        I said: ...
+        It typed: ...
+        I expected: ...
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it went wrong, if you can tell
+      options:
+        - Heard the wrong words
+        - Detected the wrong language
+        - Cleanup changed the meaning
+        - Wrong script or spelling
+        - Not sure

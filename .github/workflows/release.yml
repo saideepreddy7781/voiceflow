@@ -15,7 +15,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  private-strings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: No private notes or personal paths in tracked files
+        run: python3 scripts/check_private_strings.py
+
   version:
+    needs: private-strings
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -38,14 +48,29 @@ jobs:
     needs: version
     runs-on: macos-26
     timeout-minutes: 40
+    outputs:
+      requirement: ${{ steps.dmg.outputs.requirement }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Unit tests
         run: swift test --package-path VoiceFlow
+      # Without these secrets the build is ad hoc signed. See docs/RELEASING.md.
+      - name: Import the signing identity into a temporary keychain
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
+        run: scripts/import-signing-cert.sh
       - name: Build the DMG (universal)
-        run: scripts/release.sh
+        id: dmg
+        run: |
+          scripts/release.sh
+          echo "requirement=$(cat build/designated-requirement.txt)" >> "$GITHUB_OUTPUT"
+      - name: Remove the temporary keychain
+        if: always()
+        run: |
+          if [ -n "${SIGN_KEYCHAIN:-}" ]; then security delete-keychain "$SIGN_KEYCHAIN"; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
@@ -136,9 +161,78 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          SIGNING_REQUIREMENT: ${{ needs.macos.outputs.requirement }}
         run: |
+          scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "VoiceFlow ${{ needs.version.outputs.version }}" \
-            --notes-file "docs/releases/$GITHUB_REF_NAME.md" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
             --verify-tag
+
+  homebrew-cask:
+    # Uses the workflow's own token, so no personal access token has to be stored.
+    needs: [version, publish]
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Point the cask at the published DMG
+        id: cask
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          current="$(sed -nE 's/^  version "([^"]+)"/\1/p' Casks/voiceflow.rb)"
+          newest="$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)"
+          if [ "$newest" != "$VERSION" ] || [ "$current" = "$VERSION" ]; then
+            echo "Cask is at $current; nothing to do for $VERSION."
+            exit 0
+          fi
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "VoiceFlow-$VERSION-macOS.dmg" --dir "$RUNNER_TEMP"
+          sha="$(sha256sum "$RUNNER_TEMP/VoiceFlow-$VERSION-macOS.dmg" | cut -d' ' -f1)"
+          scripts/update-cask.sh "$VERSION" "$sha"
+          ruby -c Casks/voiceflow.rb
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Commit the cask to main, or open a pull request if main is protected
+        if: steps.cask.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/voiceflow.rb
+          git commit -m "Update the Homebrew cask to $VERSION"
+          if git push origin HEAD:main; then
+            exit 0
+          fi
+          branch="cask/v$VERSION"
+          if git push origin "HEAD:refs/heads/$branch" && \
+             gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+               --title "Update the Homebrew cask to $VERSION" \
+               --body "The release workflow could not push to main. Merge this so brew users get $VERSION."; then
+            echo "::warning::main is protected: opened a pull request for the cask update."
+          else
+            echo "::warning::Could not update the cask automatically. Run scripts/update-cask.sh by hand."
+            { echo '```ruby'; cat Casks/voiceflow.rb; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  site:
+    # A release made with the workflow token doesn't fire `release` events, so dispatch the deploy here.
+    needs: publish
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      actions: write
+    steps:
+      - name: Deploy the landing page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
