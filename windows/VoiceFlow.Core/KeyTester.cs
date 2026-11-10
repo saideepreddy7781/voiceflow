@@ -49,7 +49,7 @@ public sealed class KeyTester(HttpClient? client = null)
             {
                 // Gemini answers 400 API_KEY_INVALID for a bad key; Groq answers 401.
                 ProviderErrorKind.Http when e.StatusCode is 400 or 401 or 403 => new(KeyCheckStatus.InvalidKey, ""),
-                ProviderErrorKind.RateLimited => new(KeyCheckStatus.Failed, "rate limited, try again in a minute"),
+                ProviderErrorKind.RateLimited or ProviderErrorKind.DailyLimit => new(KeyCheckStatus.Failed, "rate limited, try again in a minute"),
                 ProviderErrorKind.Http => new(KeyCheckStatus.Failed, $"HTTP {e.StatusCode}"),
                 ProviderErrorKind.Network => new(KeyCheckStatus.Failed, e.Detail),
                 _ => new(KeyCheckStatus.Failed, e.Message),

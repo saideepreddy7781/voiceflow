@@ -79,7 +79,7 @@ public class LiveGroqTests(ITestOutputHelper output)
         Assert.False(AudioMath.IsSilent(samples));
         // The same path the app uses: re-encoded through AudioMath.Wav, Whisper mode on.
         var wav = AudioMath.Wav(AudioMath.Normalized(samples));
-        var detailed = await new GroqTranscriber(Key).TranscribeResolvingAsync(wav, "en", null, ["en"], null);
+        var detailed = await new GroqTranscriber(Key).TranscribeResolvingAsync(wav, new LanguagePlan(["en"]), new WhisperPrompts());
         var outcome = await new TextCleaner(new GroqChat(Key), "qwen/qwen3.8-27b")
             .CleanAsync(new CleanupRequest(detailed.Text, WritingStyle.Casual));
         output.WriteLine($"[{detailed.Language}] {detailed.Text}\n→ {outcome.Text}");
@@ -117,7 +117,7 @@ public class LiveGroqTests(ITestOutputHelper output)
         foreach (var (clip, expectTelugu) in new[] { ("telugu-english", true), ("question", false), ("email", false) })
         {
             if (!File.Exists(Path.Combine(Fixtures, clip + ".wav"))) continue;
-            var result = await transcriber.TranscribeResolvingAsync(Clip(clip), prefs.WhisperLanguage, prefs.ParallelLanguage, prefs.Languages, null);
+            var result = await transcriber.TranscribeResolvingAsync(Clip(clip), prefs.LanguagePlanFor(), new WhisperPrompts());
             output.WriteLine($"{clip}: [{result.Language ?? "?"}] {result.Text}");
             Assert.Equal(expectTelugu, Scripts.Dominant(result.Text) == Script.Telugu);
         }
@@ -137,8 +137,9 @@ public class LiveGroqTests(ITestOutputHelper output)
     public async Task MeetingChunkGetsNotes()
     {
         var mic = AudioMath.ReadWav16(Clip("email"));
-        var lines = SpeakerAttribution.Lines(
-            await new GroqTranscriber(Key).TranscribeDetailedAsync(AudioMath.Wav(mic), "en", null), 0, mic, new float[mic.Length]);
+        var transcript = await new GroqTranscriber(Key).TranscribeDetailedAsync(AudioMath.Wav(mic), "en", null, wordTimestamps: true);
+        Assert.Contains(transcript.Segments, x => x.Words is { Count: > 0 });
+        var lines = ChunkLines.Lines(transcript, new TimeMap([new(0, 0, 600)]), Speaker.You, 0);
         Assert.NotEmpty(lines);
         Assert.All(lines, l => Assert.Equal(Speaker.You, l.Speaker));
         var notes = await new MeetingNotesWriter(new GroqChat(Key), "openai/gpt-oss-120b")

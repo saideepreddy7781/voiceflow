@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using VoiceFlow.Core.Speech;
 
 namespace VoiceFlow.Core.AI;
 
@@ -10,15 +11,18 @@ public class GroqChat
 {
     readonly string _apiKey;
     readonly HttpClient _client;
+    readonly GroqGate _gate;
 
-    public GroqChat(string apiKey, HttpClient? client = null)
+    public GroqChat(string apiKey, HttpClient? client = null, GroqGate? gate = null)
     {
         _apiKey = apiKey.Trim();
         _client = client ?? GroqHttp.Shared;
+        _gate = gate ?? GroqGate.Shared;
     }
 
     public virtual async Task<string> CompleteAsync(string model, string system, string user, int maxTokens = 800,
-                                                    bool json = false, double timeoutSeconds = 6, CancellationToken cancel = default)
+                                                    bool json = false, double timeoutSeconds = 6, GroqPriority priority = GroqPriority.Interactive,
+                                                    CancellationToken cancel = default)
     {
         if (_apiKey.Length == 0) throw ProviderException.MissingKey();
         var body = new JsonObject
@@ -34,11 +38,13 @@ public class GroqChat
         if (json) body["response_format"] = new JsonObject { ["type"] = "json_object" };
         var payload = body.ToJsonString();
 
-        var data = await GroqHttp.SendAsync(_client, () => new HttpRequestMessage(HttpMethod.Post, new Uri(Groq.BaseUrl, "chat/completions"))
-        {
-            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", _apiKey) },
-            Content = new StringContent(payload, Encoding.UTF8, "application/json"),
-        }, TimeSpan.FromSeconds(timeoutSeconds), cancel).ConfigureAwait(false);
+        var estimate = TokenEstimate.Count(system) + TokenEstimate.Count(user) + maxTokens / 2;
+        var data = await _gate.PerformAsync(GroqCost.Chat(model, estimate), priority, () =>
+            GroqHttp.SendDetailedAsync(_client, () => new HttpRequestMessage(HttpMethod.Post, new Uri(Groq.BaseUrl, "chat/completions"))
+            {
+                Headers = { Authorization = new AuthenticationHeaderValue("Bearer", _apiKey) },
+                Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+            }, TimeSpan.FromSeconds(timeoutSeconds), cancel), cancel).ConfigureAwait(false);
 
         return ParseCompletion(data);
     }
@@ -63,5 +69,20 @@ public class GroqChat
             var content = message.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString()! : "";
             return content.Trim();
         }
+    }
+}
+
+/// <summary>A rough token count for chat requests: about 4 characters per token for English, about 1 token per character for Telugu and other non-Latin scripts.</summary>
+public static class TokenEstimate
+{
+    public static int Count(string text)
+    {
+        int ascii = 0, other = 0;
+        foreach (var r in text.EnumerateRunes())
+        {
+            if (r.IsAscii) ascii++;
+            else other++;
+        }
+        return ascii / 4 + other;
     }
 }

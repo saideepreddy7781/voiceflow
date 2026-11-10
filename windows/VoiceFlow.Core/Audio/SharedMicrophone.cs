@@ -52,6 +52,15 @@ public sealed record SharedMicrophoneOptions
         [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(15)];
     /// <summary>How often the health checks run. Null when the caller drives <see cref="SharedMicrophone.Poll"/>.</summary>
     public TimeSpan? PollInterval { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// For speaker loopback. Windows delivers no frames while nothing is playing, so silence and missing frames say
+    /// nothing about the device. Only a lost device or a change of default output restarts it.
+    /// </summary>
+    public static SharedMicrophoneOptions Loopback => new()
+    {
+        StallAfter = TimeSpan.MaxValue, DeadAfter = TimeSpan.MaxValue, QuietAfter = TimeSpan.MaxValue,
+    };
 }
 
 /// <summary>

@@ -46,7 +46,7 @@ internal sealed class DictationController : IDisposable
     Task<string>? _beforeCursorTask;
     /// <summary>Set once the target is known to be a password field: nothing is uploaded.</summary>
     bool _blockedField;
-    string? _whisperPrompt;
+    IReadOnlyList<string> _whisperTerms = [];
     Task? _processing;
     bool _warnedLong;
     int _session;
@@ -128,7 +128,7 @@ internal sealed class DictationController : IDisposable
         _segments = [];
         _blockedField = false;
         var screenNames = _context.IsTerminal ? [] : NameExtractor.Extract([_context.WindowTitle]);
-        _whisperPrompt = NameExtractor.WhisperPrompt(_model.DictionaryTerms, screenNames);
+        _whisperTerms = _model.DictionaryTerms.Concat(screenNames).ToList();
         Sounds.Start(prefs.PlaySounds);
         if (prefs.MuteAudioWhileDictating && !MeetingRecording())
         {
@@ -265,7 +265,7 @@ internal sealed class DictationController : IDisposable
         {
             Logger.Error($"Transcription failed ({e.Kind})");
             Sounds.Error(_model.Preferences.PlaySounds);
-            _bar.Show("Transcription failed", e.Message, e.IsBadKey || e.Kind == ProviderErrorKind.MissingKey ? new ToastAction("Open Settings", OpenSettings) : null, 6);
+            _bar.Show(e.Kind == ProviderErrorKind.DailyLimit ? "Groq's daily limit ran out" : "Transcription failed", e.Message, e.IsBadKey || e.Kind == ProviderErrorKind.MissingKey ? new ToastAction("Open Settings", OpenSettings) : null, 6);
             _model.Record(new HistoryEntry(kind == SessionKind.Command ? HistoryKind.Command : HistoryKind.Dictation, context.AppName, "", "",
                                            audioSeconds, 0, "failed") { Reason = DeliveryReason.TranscriptionFailed });
             Note(DeliveryReason.TranscriptionFailed, DeliveryDetail.Provider, audioSeconds, (int)began.ElapsedMilliseconds, kind);
@@ -310,7 +310,7 @@ internal sealed class DictationController : IDisposable
                 var style = AppClassifier.Style(context.ProcessName, context.WindowTitle, prefs);
                 var files = await MentionedFilesAsync(context, transcript);
                 var request = new CleanupRequest(transcript, style, context.AppName, names, beforeCursor, files, AppClassifier.TagsFiles(context.ProcessName),
-                                                 prefs.CleanupLevel, prefs.SpeaksTelugu ? prefs.TeluguScript : null);
+                                                 prefs.CleanupLevel, prefs.SpeaksTelugu ? prefs.TeluguScript : null, prefs.SpeaksHindi ? prefs.HindiScript : null);
                 var outcome = await new TextCleaner(new GroqChat(key), prefs.CleanupModel).CleanAsync(request);
                 cleaned = outcome.Text;
                 note = outcome.Note;
@@ -660,15 +660,15 @@ internal sealed class DictationController : IDisposable
         if (_blockedField) return;
         var prefs = _model.Preferences;
         var audio = prefs.WhisperMode ? AudioMath.Normalized(samples) : samples;
-        var prompt = _whisperPrompt;
+        var prompts = new WhisperPrompts(_whisperTerms, prefs.TeluguScript, prefs.HindiScript);
         var key = _model.GetKey();
         var task = Task.Run(async () =>
         {
             if (AudioMath.IsSilent(audio)) return "";
             if (key == null) throw ProviderException.MissingKey();
             var transcriber = new GroqTranscriber(key, prefs.TranscriptionModel);
-            var result = await transcriber.TranscribeResolvingAsync(AudioMath.Wav(audio), prefs.WhisperLanguage, prefs.ParallelLanguage,
-                                                                    prefs.Languages, prompt).ConfigureAwait(false);
+            var result = await transcriber.TranscribeResolvingAsync(AudioMath.Wav(audio), prefs.LanguagePlanFor(), prompts,
+                                                                    priority: GroqPriority.Interactive).ConfigureAwait(false);
             return result.Text;
         });
         // A cancelled session drops its tasks; observe failures so they are not reported as unobserved.

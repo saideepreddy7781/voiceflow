@@ -106,6 +106,7 @@ internal sealed class HistoryService : IHistoryService
     public event EventHandler? Changed;
     public void Delete(Guid id) => _model.DeleteHistory([id]);
     public void ToggleFlag(Guid id) => _model.ToggleHistoryFlag(id);
+    public void ClearAll() => _model.ClearHistory();
     public Task PasteAsync(string text) => _dictation.PasteTextAsync(text);
 }
 
@@ -145,6 +146,8 @@ internal sealed class MeetingsService : IMeetingsService
 
     public double MicLevel => _notetaker.MicLevel;
     public double SystemLevel => _notetaker.SystemLevel;
+    public string? MicLanguage => _notetaker.MicLanguage;
+    public string? CallLanguage => _notetaker.CallLanguage;
 
     public MicHealth MicHealth => _notetaker.MicHealth switch
     {

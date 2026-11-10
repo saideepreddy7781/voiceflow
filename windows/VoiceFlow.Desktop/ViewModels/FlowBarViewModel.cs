@@ -52,6 +52,7 @@ public sealed partial class FlowBarViewModel : ObservableObject
     [RelayCommand] void Cancel() => _dictation.Cancel();
     [RelayCommand] void Confirm() => _dictation.Confirm();
     [RelayCommand] void StopMeeting() => _dictation.StopMeeting();
+    [RelayCommand] void OpenMeetings() => _dictation.OpenMeetings();
     [RelayCommand] void RunToastAction() => Toast?.Action?.Invoke();
     [RelayCommand] void DismissToast() => _dictation.DismissToast();
 }

@@ -30,7 +30,7 @@ public static class Gemini
     public static readonly Uri BaseUrl = new("https://generativelanguage.googleapis.com/v1beta/");
 }
 
-public enum ProviderErrorKind { MissingKey, RateLimited, Http, Network, BadResponse }
+public enum ProviderErrorKind { MissingKey, RateLimited, DailyLimit, Http, Network, BadResponse }
 
 /// <summary>A provider failure with a message that can be shown to the user as is.</summary>
 public sealed class ProviderException : Exception
@@ -53,6 +53,19 @@ public sealed class ProviderException : Exception
 
     public static ProviderException RateLimited(double? retryAfter) =>
         new(ProviderErrorKind.RateLimited, "Groq rate limit reached. Try again in a moment.", retryAfter);
+
+    /// <summary>A per-day limit: waiting a minute won't help. <paramref name="resource"/> is what ran out, in plain words.</summary>
+    public static ProviderException DailyLimit(string resource, double? retryAfter) =>
+        new(ProviderErrorKind.DailyLimit,
+            $"Groq's free daily limit for {resource} ran out." + (retryAfter is { } s ? $" It resets {Relative(s)}." : " It resets within a day."),
+            retryAfter, detail: resource);
+
+    static string Relative(double seconds)
+    {
+        if (seconds < 90) return "in about a minute";
+        if (seconds < 5_400) return $"in about {(int)Math.Round(seconds / 60)} minutes";
+        return $"in about {(int)Math.Round(seconds / 3_600)} hours";
+    }
 
     public static ProviderException Http(int status, string body)
     {

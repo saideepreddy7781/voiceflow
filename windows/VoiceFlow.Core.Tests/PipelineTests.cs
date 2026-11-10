@@ -442,8 +442,8 @@ public class AITests
         Assert.StartsWith("You are the text-cleanup step of a dictation app.", CleanupPrompt.System);
         Assert.EndsWith("1. Clone the repo.\n2. Run npm install.", CleanupPrompt.System);
         Assert.DoesNotContain('\r', CommandPrompt.System);
-        Assert.Equal(4370, CleanupPrompt.System.Length);   // the Windows self-test checks the same number
-        Assert.Equal(5, CleanupPrompt.Version);
+        Assert.Equal(5388, CleanupPrompt.System.Length);   // the Windows self-test checks the same number
+        Assert.Equal(6, CleanupPrompt.Version);
     }
 
     [Fact]
@@ -486,7 +486,7 @@ sealed class FakeChat(string reply) : GroqChat("test")
     public string LastUser { get; private set; } = "";
 
     public override Task<string> CompleteAsync(string model, string system, string user, int maxTokens = 800, bool json = false,
-                                               double timeoutSeconds = 6, CancellationToken cancel = default)
+                                               double timeoutSeconds = 6, GroqPriority priority = GroqPriority.Interactive, CancellationToken cancel = default)
     {
         LastUser = user;
         return Task.FromResult(reply);
@@ -498,14 +498,14 @@ public class TeluguTests
     static DetailedTranscript T(string text, string? lang, double? conf) => new(text, lang, [], conf);
 
     [Fact]
-    public void ParallelLanguageOnlyWithSeveralLanguages()
+    public void ForcedOnlyForOneLanguageAndTheUser()
     {
         var prefs = new Preferences { Languages = ["en", "te"] };
-        Assert.Null(prefs.WhisperLanguage);
-        Assert.Equal("te", prefs.ParallelLanguage);
+        Assert.Null(prefs.LanguagePlanFor().ForcedFirst);
+        Assert.Equal(["te"], prefs.LanguagePlanFor().OpinionCandidates);
         prefs.Languages = ["te"];
-        Assert.Equal("te", prefs.WhisperLanguage);
-        Assert.Null(prefs.ParallelLanguage);
+        Assert.Equal("te", prefs.LanguagePlanFor().ForcedFirst);
+        Assert.Null(prefs.LanguagePlanFor(PlanSpeaker.Anyone).ForcedFirst);
         Assert.Equal("te", Languages.CodeForWhisperName("Telugu"));
     }
 
@@ -513,13 +513,14 @@ public class TeluguTests
     [Fact]
     public void ResolverPicksTheRightTranscript()
     {
-        string[] langs = ["en", "te"];
-        Assert.StartsWith("Can you", LanguageResolver.Choose(T("Can you check the invoice?", "en", -0.14), T("క్ినిడాన్ిరాలు", "te", -0.70), "te", langs).Text);
-        Assert.Equal("te", LanguageResolver.Choose(T("नेनु रेपू ओफीस की वस्तानू", "hi", -0.079), T("నేను రేపు ఆఫీస్ కి వస్తాను", "te", -0.106), "te", langs).Language);
-        Assert.Equal("te", LanguageResolver.Choose(T("நேனு ரேபோ மீட்டின்க்கி", "ta", -0.44), T("నేను రేపు మీటింగ్ కి", "te", -0.11), "te", langs).Language);
-        Assert.Equal("te", LanguageResolver.Choose(T("Neme Rebu meeting Ghe Atena Bono", "en", -0.72), T("నేను రేపు మీటింగ్ కి అటెండ్ అవుతాను", "te", -0.20), "te", langs).Language);
-        Assert.Equal("en", LanguageResolver.Choose(T("Okay", "en", -0.30), T("ఓకే", "te", -0.25), "te", langs).Language);
-        Assert.Equal("Hi", LanguageResolver.Choose(T("Hi", "en", -0.1), null, "te", langs).Text);
+        var plan = new LanguagePlan(["en", "te"]);
+        LanguageOpinion Te(string text, double conf) => new("te", T(text, "te", conf));
+        Assert.StartsWith("Can you", LanguageResolver.Choose(T("Can you check the invoice?", "en", -0.14), [Te("క్ినిడాన్ిరాలు", -0.70)], plan).Text);
+        Assert.Equal("te", LanguageResolver.Choose(T("नेनु रेपू ओफीस की वस्तानू", "hi", -0.079), [Te("నేను రేపు ఆఫీస్ కి వస్తాను", -0.106)], plan).Language);
+        Assert.Equal("te", LanguageResolver.Choose(T("நேனு ரேபோ மீட்டின்க்கி", "ta", -0.44), [Te("నేను రేపు మీటింగ్ కి", -0.11)], plan).Language);
+        Assert.Equal("te", LanguageResolver.Choose(T("Neme Rebu meeting Ghe Atena Bono", "en", -0.72), [Te("నేను రేపు మీటింగ్ కి అటెండ్ అవుతాను", -0.20)], plan).Language);
+        Assert.Equal("en", LanguageResolver.Choose(T("Okay", "en", -0.30), [Te("ఓకే", -0.25)], plan).Language);
+        Assert.Equal("Hi", LanguageResolver.Choose(T("Hi", "en", -0.1), [], plan).Text);
     }
 
     [Fact]
@@ -538,7 +539,8 @@ public class TeluguTests
         var d = GroqTranscriber.ParseVerbose(System.Text.Encoding.UTF8.GetBytes(json));
         Assert.Equal("నమస్తే", d.Text);
         Assert.Equal("te", d.Language);
-        Assert.Equal(new TranscriptSegment(0, 1.5, "నమస్తే"), d.Segments[0]);
+        Assert.Equal("నమస్తే", d.Segments[0].Text);
+        Assert.Equal(1.5, d.Segments[0].End);
         Assert.True(Math.Abs((d.Confidence ?? 0) - (-0.3)) < 0.0001);   // (−0.2×1.5 + −0.6×0.5) / 2
     }
 
@@ -549,7 +551,7 @@ public class TeluguTests
     [Fact]
     public void SecondOpinionRule()
     {
-        string[] langs = ["en", "te"];
+        var langs = new LanguagePlan(["en", "te"]);
         Assert.False(LanguageResolver.NeedsSecondOpinion(T("Can you check the invoice?", "en", -0.14), langs));
         Assert.True(LanguageResolver.NeedsSecondOpinion(T("नेनु रेपू", "hi", -0.08), langs));
         Assert.True(LanguageResolver.NeedsSecondOpinion(T("Neme Rebu meeting", "en", -0.7), langs));

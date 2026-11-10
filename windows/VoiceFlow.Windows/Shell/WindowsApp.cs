@@ -84,6 +84,7 @@ internal sealed class WindowsApp
         _bar.ConfirmRequested += () => { _dictation.Finish(); _hotkeys.ResetSession(notify: false); };
         _bar.CancelRequested += () => { _dictation.Cancel(); _hotkeys.ResetSession(notify: false); };
         _bar.StopMeetingRequested += () => _notetaker.Stop();
+        _bar.OpenMeetingsRequested += () => ShowMain(Page.Meetings);
 
         _model.PreferencesChanged += OnPreferencesChanged;
         _notetaker.Changed += UpdateTray;

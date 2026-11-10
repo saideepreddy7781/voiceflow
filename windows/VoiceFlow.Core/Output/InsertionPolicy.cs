@@ -70,6 +70,19 @@ public static class InsertionPolicy
         return Squeezed(after).Contains(text.Length > 60 ? text[..60] : text, StringComparison.Ordinal) ? PasteCheck.Verified : PasteCheck.Unknown;
     }
 
+    /// <summary>
+    /// Whether the text just before the caret ends with what was pasted, for editors that expose text but no value
+    /// (Word and web editors). Reads a short tail of the document, so it can confirm a paste and never reject one.
+    /// </summary>
+    /// <param name="beforeCaret">Text before the caret after the paste, or empty when it could not be read.</param>
+    public static PasteCheck VerifyCaret(string beforeCaret, string inserted)
+    {
+        var text = Squeezed(inserted);
+        if (text.Length == 0 || beforeCaret.Length == 0) return PasteCheck.Unknown;
+        var tail = text.Length > 40 ? text[^40..] : text;
+        return Squeezed(beforeCaret).EndsWith(tail, StringComparison.Ordinal) ? PasteCheck.Verified : PasteCheck.Unknown;
+    }
+
     public static (DeliveryReason Reason, string? Detail) ReasonFor(PasteCheck check) => check switch
     {
         PasteCheck.Verified => (DeliveryReason.PastedVerified, null),

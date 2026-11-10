@@ -51,76 +51,21 @@ internal static class AudioDevices
             throw new AudioCaptureException("No microphone was found. Plug one in or choose another in Settings.");
         return enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
     }
+
+    /// <summary>The default speakers or headset, for loopback. The caller disposes it.</summary>
+    public static MMDevice DefaultOutput()
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        if (!enumerator.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia))
+            throw new AudioCaptureException("No speakers or headphones are active, so the meeting audio cannot be recorded.");
+        return enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+    }
 }
 
 internal sealed class AudioCaptureException(string message, Exception? inner = null) : Exception(message, inner);
 
-/// <summary>
-/// WASAPI capture (shared mode) converted to 16 kHz mono floats. Used for the microphone and, with
-/// <c>loopback</c>, for what the PC is playing (the other side of a call). Audio arrives on NAudio's capture
-/// thread and goes into a thread-safe buffer.
-/// </summary>
-internal sealed class AudioCapture : IDisposable
+internal static class AudioCapture
 {
-    readonly SampleBuffer _buffer = new();
-    readonly bool _loopback;
-    readonly string? _deviceId;
-    WasapiCapture? _capture;
-    MMDevice? _device;
-    StreamingResampler? _resampler;
-    int _bits;
-    bool _isFloat;
-
-    public bool IsRecording { get; private set; }
-    public string DeviceName { get; private set; } = "";
-
-    /// <summary>Raised on the UI thread when Windows stops the stream (device unplugged, exclusive use).</summary>
-    public event Action<Exception?>? Stopped;
-
-    public AudioCapture(string? deviceId, bool loopback = false)
-    {
-        _deviceId = deviceId;
-        _loopback = loopback;
-    }
-
-    public void Start()
-    {
-        if (IsRecording) return;
-        _buffer.Reset();
-        try
-        {
-            if (_loopback)
-            {
-                using var enumerator = new MMDeviceEnumerator();
-                if (!enumerator.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia))
-                    throw new AudioCaptureException("No speakers or headphones are active, so the meeting audio cannot be recorded.");
-                _device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-                _capture = new WasapiLoopbackCapture(_device);
-            }
-            else
-            {
-                _device = AudioDevices.Microphone(_deviceId);
-                _capture = new WasapiCapture(_device, useEventSync: true, audioBufferMillisecondsLength: 100);
-            }
-            DeviceName = _device.FriendlyName;
-            var format = _capture.WaveFormat;
-            _bits = format.BitsPerSample;
-            _isFloat = format.Encoding == WaveFormatEncoding.IeeeFloat
-                       || (format is WaveFormatExtensible ext && ext.SubFormat == NAudio.Dmo.AudioMediaSubtypes.MEDIASUBTYPE_IEEE_FLOAT);
-            _resampler = new StreamingResampler(format.SampleRate, format.Channels);
-            _capture.DataAvailable += OnData;
-            _capture.RecordingStopped += OnStopped;
-            _capture.StartRecording();
-            IsRecording = true;
-            Logger.Info($"{(_loopback ? "Loopback" : "Microphone")} capture started ({format.SampleRate} Hz, {format.Channels} ch, {_bits}-bit{(_isFloat ? " float" : "")})");
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            Cleanup();
-            throw Translate(e, _loopback);
-        }
-    }
-
     /// <summary>Turns a start failure into the message the user sees.</summary>
     internal static AudioCaptureException Translate(Exception e, bool loopback)
     {
@@ -134,81 +79,6 @@ internal sealed class AudioCapture : IDisposable
         // TimeoutException…); any of them means the device could not start.
         return new AudioCaptureException($"The {(loopback ? "speaker audio" : "microphone")} could not start: {e.Message}", e);
     }
-
-    void OnData(object? sender, WaveInEventArgs e)
-    {
-        // Capture thread: convert and store, nothing else.
-        try
-        {
-            if (e.BytesRecorded <= 0 || _resampler == null) return;
-            var floats = PcmDecoder.ToFloat(e.Buffer.AsSpan(0, e.BytesRecorded), _bits, _isFloat);
-            var mono = _resampler.Process(floats);
-            if (mono.Length > 0) _buffer.Append(mono);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("Audio conversion failed", ex);
-        }
-    }
-
-    void OnStopped(object? sender, StoppedEventArgs e)
-    {
-        var wasRecording = IsRecording;
-        IsRecording = false;
-        if (e.Exception != null) Logger.Error("Audio capture stopped by Windows", e.Exception);
-        if (wasRecording) Stopped?.Invoke(e.Exception);
-    }
-
-    /// <summary>Stops capture and returns everything recorded.</summary>
-    public float[] Stop()
-    {
-        if (_capture != null)
-        {
-            IsRecording = false;
-            try { _capture.StopRecording(); }
-            catch (Exception e) when (e is COMException or InvalidOperationException or UnauthorizedAccessException) { Logger.Warn($"StopRecording: {e.Message}"); }
-        }
-        Cleanup();
-        return _buffer.Snapshot();
-    }
-
-    public float[] Samples() => _buffer.Snapshot();
-    public float[] SamplesFrom(int start) => _buffer.CopyFrom(start);
-    public float[] Drain() => _buffer.Drain();
-    public int SampleCount => _buffer.Count;
-
-    /// <summary>0...1 level of the last 50 ms, for the waveform.</summary>
-    public float CurrentLevel() => AudioMath.Level(_buffer.Tail(800));
-
-    void Cleanup()
-    {
-        if (_capture != null)
-        {
-            _capture.DataAvailable -= OnData;
-            _capture.RecordingStopped -= OnStopped;
-            _capture.Dispose();
-            _capture = null;
-        }
-        _device?.Dispose();
-        _device = null;
-    }
-
-    public void Dispose()
-    {
-        if (IsRecording) Stop();
-        else Cleanup();
-    }
-}
-
-/// <summary>The microphone or the speaker loopback as a meeting source.</summary>
-internal sealed class CaptureMeetingSource(string? deviceId, bool loopback) : IMeetingAudioSource
-{
-    readonly AudioCapture _capture = new(deviceId, loopback);
-
-    public void StartCapture() => _capture.Start();
-    public void StopCapture() => _capture.Stop();
-    public float[] DrainSamples() => _capture.Drain();
-    public void Dispose() => _capture.Dispose();
 }
 
 /// <summary>

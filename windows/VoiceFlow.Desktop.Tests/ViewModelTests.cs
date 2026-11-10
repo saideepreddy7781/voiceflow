@@ -402,6 +402,72 @@ public class ViewModelTests
         Assert.Equal(before + 1, live.Lines.Count);
     }
 
+    [Fact]
+    public void ClearingHistoryAsksFirst()
+    {
+        var services = Services();
+        object? dialog = null;
+        var privacy = new SettingsViewModel(services, () => { }, d => dialog = d).Privacy;
+        var count = services.History.Entries.Count;
+        privacy.AskClearHistoryCommand.Execute(null);
+        Assert.Equal(count, services.History.Entries.Count);
+        ((ConfirmDialogViewModel)dialog!).ConfirmCommand.Execute(null);
+        Assert.Empty(services.History.Entries);
+        Assert.Null(dialog);
+    }
+
+    [Fact]
+    public void ClickingTheMeetingChipOpensMeetings()
+    {
+        var d = new DemoDictation();
+        new FlowBarViewModel(new ServicesWithDictation(Services(), d), runClock: false).OpenMeetingsCommand.Execute(null);
+        Assert.Equal(1, d.OpenMeetingsCount);
+    }
+
+    [Fact]
+    public void SearchFindsNotesAndShowsWhere()
+    {
+        var vm = new MeetingsViewModel(Services(), _ => { }) { SearchText = "resume crash" };
+        var hit = Assert.Single(vm.Items, i => i.Title == "Weekly product sync");
+        Assert.True(hit.HasSnippet);
+        Assert.Contains("resume crash", hit.Snippet, StringComparison.OrdinalIgnoreCase);
+        vm.SearchText = "no such words anywhere";
+        Assert.Empty(vm.Items);
+    }
+
+    [Fact]
+    public void ClearingTheOthersNameGoesBackToOthers()
+    {
+        var services = Services();
+        var meeting = services.Meetings.Meetings[0];
+        var vm = new MeetingDetailViewModel(meeting, services, _ => { }) { OthersName = "Rahul" };
+        vm.OthersName = "";
+        Assert.Equal("Others", meeting.LabelFor(Speaker.Others));
+    }
+
+    [Fact]
+    public async Task LiveViewShowsTheLanguageOfEachSide()
+    {
+        var services = Services();
+        await services.Meetings.StartAsync();
+        using var live = new LiveMeetingViewModel(services);
+        Assert.Equal("English", live.MicLanguage);
+        Assert.Equal("Telugu", live.CallLanguage);
+        Assert.True(live.HasCallLanguage);
+    }
+
+    [Fact]
+    public void HindiChoiceAppearsWithHindiAndSaves()
+    {
+        var services = Services();
+        var vm = new GeneralSettings(services);
+        Assert.True(vm.SpeaksHindi);
+        vm.HindiOptions.First(o => o.Script == HindiScript.Hinglish).IsSelected = true;
+        Assert.Equal(HindiScript.Hinglish, services.Preferences.Current.HindiScript);
+        vm.AllLanguages.First(l => l.Code == "hi").IsSelected = false;
+        Assert.False(vm.SpeaksHindi);
+    }
+
     sealed class ServicesWithDictation(DemoServices inner, IDictationService dictation) : IAppServices
     {
         public ISetupService Setup => inner.Setup;

@@ -13,7 +13,9 @@ public sealed record CleanupRequest(
     bool TagFiles = false,
     CleanupLevel Level = CleanupLevel.Light,
     /// <summary>Set when the dictation may be Telugu: how to write it.</summary>
-    TeluguScript? Telugu = null);
+    TeluguScript? Telugu = null,
+    /// <summary>Set when the dictation may be Hindi: how to write it.</summary>
+    HindiScript? Hindi = null);
 
 /// <summary>The cleaned text. <see cref="Note"/> says why the AI result was not used, if it wasn't.</summary>
 public sealed record CleanupOutcome(string Text, bool UsedAI, string? Note);
@@ -26,16 +28,18 @@ public sealed class TextCleaner(GroqChat chat, string model)
         var raw = request.Transcript.Trim();
         if (raw.Length == 0) return new CleanupOutcome("", false, null);
         if (request.Level == CleanupLevel.None) return new CleanupOutcome(raw, false, null);
-        // Telugu always goes through the model: script conversion and recognition fixes need it.
+        // Telugu and Hindi always go through the model: script conversion and recognition fixes need it.
         var hasTelugu = request.Telugu != null && Scripts.ContainsTelugu(raw);
-        if (!hasTelugu && CanSkipAI(raw))
+        var hasHindi = request.Hindi != null && Scripts.ContainsDevanagari(raw);
+        if (!hasTelugu && !hasHindi && CanSkipAI(raw))
             return new CleanupOutcome(Tidy(raw, request.Style, request.BeforeCursor), false, null);
         var user = CleanupPrompt.UserMessage(
             raw, request.Style.PromptName(), request.AppName, request.Names ?? [], request.BeforeCursor, request.Files ?? [],
-            request.TagFiles, EnumText.Raw(request.Level), hasTelugu && request.Telugu is { } t ? EnumText.PromptName(t) : null);
+            request.TagFiles, EnumText.Raw(request.Level), hasTelugu && request.Telugu is { } t ? EnumText.PromptName(t) : null,
+            hasHindi && request.Hindi is { } h ? EnumText.PromptName(h) : null);
         try
         {
-            var output = await chat.CompleteAsync(model, CleanupPrompt.System, user, maxTokens: 1_200, cancel: cancel).ConfigureAwait(false);
+            var output = await chat.CompleteAsync(model, CleanupPrompt.System, user, maxTokens: 1_200, priority: GroqPriority.Interactive, cancel: cancel).ConfigureAwait(false);
             if (Problem(output, raw) is { } problem)
                 return new CleanupOutcome(Tidy(raw, request.Style, request.BeforeCursor), false, problem);
             return new CleanupOutcome(output, true, null);

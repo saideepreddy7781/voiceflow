@@ -29,7 +29,7 @@
           </StackPanel>
         </Border>
         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-          <Button Content="Copy" Command="{Binding CopyMarkdownCommand}"/>
+          <Button Content="Copy as Markdown" Command="{Binding CopyMarkdownCommand}"/>
           <Button Command="{Binding ExportMarkdownCommand}">
             <StackPanel Orientation="Horizontal" Spacing="6">
               <PathIcon Data="{StaticResource IconArrowDownload}" Width="16" Height="16"/>
@@ -54,6 +54,9 @@
           <TextBlock Text="{Binding ErrorText}" Classes="callout wrap"/>
           <Button Content="Try again" Command="{Binding RewriteNotesCommand}" HorizontalAlignment="Left"/>
         </StackPanel>
+      </Border>
+      <Border Classes="notice" IsVisible="{Binding HasNote}">
+        <TextBlock Text="{Binding Note}" Classes="callout wrap"/>
       </Border>
       <TextBlock Text="Writing notes. Long meetings take a minute or two." Classes="callout muted" IsVisible="{Binding IsWriting}"/>
 
@@ -108,7 +111,7 @@
                 <TextBlock Text="Your microphone" Classes="caption subtle"/>
                 <TextBox Text="{Binding YouName}" AutomationProperties.Name="Name for your microphone speaker"/>
               </StackPanel>
-              <StackPanel Grid.Column="2" Spacing="4">
+              <StackPanel Grid.Column="2" Spacing="4" IsVisible="{Binding HasOthers}">
                 <TextBlock Text="Meeting audio" Classes="caption subtle"/>
                 <TextBox Text="{Binding OthersName}" AutomationProperties.Name="Name for the meeting audio speaker"/>
               </StackPanel>

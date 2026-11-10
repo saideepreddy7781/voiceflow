@@ -62,7 +62,7 @@ public sealed partial class ShellViewModel : ObservableObject
                 Page.Snippets => new SnippetsViewModel(_services, ShowDialog),
                 Page.Style => new StyleViewModel(_services),
                 Page.Scratchpad => new ScratchpadViewModel(_services, ShowDialog),
-                Page.Settings => new SettingsViewModel(_services, RunSetup),
+                Page.Settings => new SettingsViewModel(_services, RunSetup, ShowDialog),
                 _ => new HelpViewModel(_services),
             };
             _pages[page] = vm;

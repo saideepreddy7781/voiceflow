@@ -27,7 +27,10 @@
       <Grid ColumnDefinitions="*,16,*">
         <Border Classes="card" Padding="20,16">
           <StackPanel Spacing="12">
-            <TextBlock Text="You (microphone)" Classes="callout muted"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="You (microphone)" Classes="callout muted" VerticalAlignment="Center"/>
+              <Border Classes="chip" IsVisible="{Binding HasMicLanguage}"><TextBlock Text="{Binding MicLanguage}"/></Border>
+            </StackPanel>
             <c:LevelMeter Level="{Binding MicLevel}" Fill="{DynamicResource MeterFill}" Track="{DynamicResource Track}"/>
             <StackPanel Orientation="Horizontal" Spacing="6">
               <PathIcon Data="{StaticResource IconCheckmarkCircle}" Width="14" Height="14" Foreground="{DynamicResource FgSubtle}" IsVisible="{Binding !HealthProblem}"/>
@@ -38,9 +41,12 @@
         </Border>
         <Border Grid.Column="2" Classes="card" Padding="20,16" IsVisible="{Binding HasOthers}">
           <StackPanel Spacing="12">
-            <TextBlock Text="Others (meeting audio)" Classes="callout muted wrap"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Others (meeting audio)" Classes="callout muted" VerticalAlignment="Center"/>
+              <Border Classes="chip" IsVisible="{Binding HasCallLanguage}"><TextBlock Text="{Binding CallLanguage}"/></Border>
+            </StackPanel>
             <c:LevelMeter Level="{Binding SystemLevel}" Fill="{DynamicResource MeterFill}" Track="{DynamicResource Track}"/>
-            <TextBlock Text="The transcript fills in at pauses" Classes="caption subtle wrap"/>
+            <TextBlock Text="Each side fills in after about 20 seconds of talking, at a pause" Classes="caption subtle wrap"/>
           </StackPanel>
         </Border>
       </Grid>

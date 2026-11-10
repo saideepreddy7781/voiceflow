@@ -8,10 +8,10 @@ using VoiceFlow.Core.Meetings;
 namespace VoiceFlow.Windows.Audio;
 
 /// <summary>
-/// WASAPI access for the shared microphone. Every COM object is created and used from the thread pool (the MTA),
+/// WASAPI access for a shared capture. Every COM object is created and used from the thread pool (the MTA),
 /// because the health checks restart devices off the UI thread and audio objects can't move between apartments.
 /// </summary>
-internal sealed class WasapiMicrophoneSource : IMicrophoneSource, IMMNotificationClient, IDisposable
+internal abstract class WasapiEndpointSource : IMMNotificationClient, IDisposable
 {
     readonly object _gate = new();
     MMDeviceEnumerator? _notifier;
@@ -24,6 +24,69 @@ internal sealed class WasapiMicrophoneSource : IMicrophoneSource, IMMNotificatio
 
     internal static T Mta<T>(Func<T> work) => Task.Run(work).GetAwaiter().GetResult();
     internal static void Mta(Action work) => Task.Run(work).GetAwaiter().GetResult();
+
+    /// <summary>Which default-device change this capture follows.</summary>
+    protected abstract bool Follows(DataFlow flow, Role role);
+
+    /// <summary>Registered on first use so the app doesn't touch the audio service until it needs a device.</summary>
+    internal void EnsureNotifications()
+    {
+        lock (_gate)
+        {
+            if (_registered) return;
+            _registered = true;
+            try
+            {
+                Mta(() =>
+                {
+                    _notifier = new MMDeviceEnumerator();
+                    _notifier.RegisterEndpointNotificationCallback(this);
+                });
+            }
+            catch (Exception e) when (e is COMException or UnauthorizedAccessException or InvalidCastException or InvalidOperationException)
+            {
+                // Recovery still works through the Lost event and the stall check.
+                Logger.Warn($"Device change notifications are unavailable (0x{e.HResult:X8})");
+                _notifier?.Dispose();
+                _notifier = null;
+            }
+        }
+    }
+
+    // These arrive on Windows' notification thread, which must not do audio work.
+    void IMMNotificationClient.OnDeviceStateChanged(string deviceId, DeviceState newState) => DevicesChanged?.Invoke();
+    void IMMNotificationClient.OnDeviceAdded(string deviceId) => DevicesChanged?.Invoke();
+    void IMMNotificationClient.OnDeviceRemoved(string deviceId) => DevicesChanged?.Invoke();
+    void IMMNotificationClient.OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
+    {
+        if (Follows(flow, role)) DevicesChanged?.Invoke();
+    }
+    void IMMNotificationClient.OnPropertyValueChanged(string deviceId, PropertyKey key) { }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_notifier == null) return;
+            var notifier = _notifier;
+            _notifier = null;
+            try
+            {
+                Mta(() =>
+                {
+                    notifier.UnregisterEndpointNotificationCallback(this);
+                    notifier.Dispose();
+                });
+            }
+            catch (Exception e) when (e is COMException or InvalidCastException or InvalidOperationException) { Logger.Warn($"Could not unregister device notifications: {e.Message}"); }
+        }
+    }
+}
+
+/// <summary>The microphone endpoints.</summary>
+internal sealed class WasapiMicrophoneSource : WasapiEndpointSource, IMicrophoneSource
+{
+    protected override bool Follows(DataFlow flow, Role role) => flow == DataFlow.Capture && role == Role.Console;
 
     public string? ResolveId(string? preferredId) => Mta(() =>
     {
@@ -59,64 +122,34 @@ internal sealed class WasapiMicrophoneSource : IMicrophoneSource, IMMNotificatio
         var pointer = Marshal.GetComInterfaceForObject(client, typeof(IMMNotificationClient));
         Marshal.Release(pointer);
     }
+}
 
-    /// <summary>Registered on first use so the app doesn't touch the audio service until it needs a microphone.</summary>
-    internal void EnsureNotifications()
+/// <summary>What the PC is playing: the default output, followed when it changes.</summary>
+internal sealed class WasapiLoopbackSource : WasapiEndpointSource, IMicrophoneSource
+{
+    protected override bool Follows(DataFlow flow, Role role) => flow == DataFlow.Render && role == Role.Multimedia;
+
+    public string? ResolveId(string? preferredId) => Mta(() =>
     {
-        lock (_gate)
+        using var enumerator = new MMDeviceEnumerator();
+        if (!enumerator.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)) return null;
+        using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        return device.ID;
+    });
+
+    public IMicrophoneDevice Open(string? preferredId)
+    {
+        EnsureNotifications();
+        return Mta(() =>
         {
-            if (_registered) return;
-            _registered = true;
-            try
-            {
-                Mta(() =>
-                {
-                    _notifier = new MMDeviceEnumerator();
-                    _notifier.RegisterEndpointNotificationCallback(this);
-                });
-            }
-            catch (Exception e) when (e is COMException or UnauthorizedAccessException or InvalidCastException or InvalidOperationException)
-            {
-                // Recovery still works through the Lost event and the stall check.
-                Logger.Warn($"Device change notifications are unavailable (0x{e.HResult:X8})");
-                _notifier?.Dispose();
-                _notifier = null;
-            }
-        }
-    }
-
-    // These arrive on Windows' notification thread, which must not do audio work.
-    void IMMNotificationClient.OnDeviceStateChanged(string deviceId, DeviceState newState) => DevicesChanged?.Invoke();
-    void IMMNotificationClient.OnDeviceAdded(string deviceId) => DevicesChanged?.Invoke();
-    void IMMNotificationClient.OnDeviceRemoved(string deviceId) => DevicesChanged?.Invoke();
-    void IMMNotificationClient.OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
-    {
-        if (flow == DataFlow.Capture && role == Role.Console) DevicesChanged?.Invoke();
-    }
-    void IMMNotificationClient.OnPropertyValueChanged(string deviceId, PropertyKey key) { }
-
-    public void Dispose()
-    {
-        lock (_gate)
-        {
-            if (_notifier == null) return;
-            var notifier = _notifier;
-            _notifier = null;
-            try
-            {
-                Mta(() =>
-                {
-                    notifier.UnregisterEndpointNotificationCallback(this);
-                    notifier.Dispose();
-                });
-            }
-            catch (Exception e) when (e is COMException or InvalidCastException or InvalidOperationException) { Logger.Warn($"Could not unregister device notifications: {e.Message}"); }
-        }
+            try { return new WasapiMicrophone(AudioDevices.DefaultOutput(), loopback: true); }
+            catch (Exception e) when (e is not OutOfMemoryException) { throw AudioCapture.Translate(e, loopback: true); }
+        });
     }
 }
 
-/// <summary>One WASAPI capture stream converted to 16 kHz mono. Takes ownership of the device.</summary>
-internal sealed class WasapiMicrophone(MMDevice device) : IMicrophoneDevice
+/// <summary>One WASAPI capture stream, microphone or loopback, converted to 16 kHz mono. Takes ownership of the device.</summary>
+internal sealed class WasapiMicrophone(MMDevice device, bool loopback = false) : IMicrophoneDevice
 {
     WasapiCapture? _capture;
     StreamingResampler? _resampler;
@@ -134,7 +167,7 @@ internal sealed class WasapiMicrophone(MMDevice device) : IMicrophoneDevice
     {
         try
         {
-            _capture = new WasapiCapture(device, useEventSync: true, audioBufferMillisecondsLength: 100);
+            _capture = loopback ? new WasapiLoopbackCapture(device) : new WasapiCapture(device, useEventSync: true, audioBufferMillisecondsLength: 100);
             var format = _capture.WaveFormat;
             _bits = format.BitsPerSample;
             _isFloat = format.Encoding == WaveFormatEncoding.IeeeFloat
@@ -143,12 +176,12 @@ internal sealed class WasapiMicrophone(MMDevice device) : IMicrophoneDevice
             _capture.DataAvailable += OnData;
             _capture.RecordingStopped += OnStopped;
             _capture.StartRecording();
-            Logger.Info($"Microphone started ({format.SampleRate} Hz, {format.Channels} ch, {_bits}-bit{(_isFloat ? " float" : "")})");
+            Logger.Info($"{(loopback ? "Loopback" : "Microphone")} started ({format.SampleRate} Hz, {format.Channels} ch, {_bits}-bit{(_isFloat ? " float" : "")})");
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             Release();
-            throw AudioCapture.Translate(e, loopback: false);
+            throw AudioCapture.Translate(e, loopback);
         }
     });
 
@@ -170,7 +203,7 @@ internal sealed class WasapiMicrophone(MMDevice device) : IMicrophoneDevice
     void OnStopped(object? sender, StoppedEventArgs e)
     {
         if (_stopping) return;
-        if (e.Exception != null) Logger.Warn($"Windows stopped the microphone: {e.Exception.GetType().Name}");
+        if (e.Exception != null) Logger.Warn($"Windows stopped the {(loopback ? "loopback" : "microphone")}: {e.Exception.GetType().Name}");
         Lost?.Invoke(e.Exception);
     }
 
@@ -191,7 +224,7 @@ internal sealed class WasapiMicrophone(MMDevice device) : IMicrophoneDevice
                 _capture.StopRecording();
                 _capture.Dispose();
             }
-            catch (Exception e) when (e is COMException or InvalidOperationException or UnauthorizedAccessException) { Logger.Warn($"Stopping the microphone: {e.GetType().Name}"); }
+            catch (Exception e) when (e is COMException or InvalidOperationException or UnauthorizedAccessException) { Logger.Warn($"Stopping the capture: {e.GetType().Name}"); }
             _capture = null;
         }
         device.Dispose();
@@ -206,12 +239,21 @@ internal static class MicrophoneHub
     public static SharedMicrophone Shared => Instance.Value;
 }
 
-/// <summary>Your microphone in a meeting: one subscriber to the shared capture.</summary>
-internal sealed class SharedMicMeetingSource(SharedMicrophone microphone, string? deviceId) : IMeetingAudioSource
+/// <summary>The call's audio, with the same recovery as the microphone. Only meetings subscribe to it.</summary>
+internal static class LoopbackHub
+{
+    static readonly Lazy<SharedMicrophone> Instance = new(() => new SharedMicrophone(new WasapiLoopbackSource(), SharedMicrophoneOptions.Loopback,
+                                                                                     log: m => Logger.Info(m.Replace("Microphone", "Meeting audio", StringComparison.Ordinal))));
+
+    public static SharedMicrophone Shared => Instance.Value;
+}
+
+/// <summary>One side of a meeting: a subscriber to a shared capture.</summary>
+internal sealed class SharedMicMeetingSource(SharedMicrophone microphone, string? deviceId, string name = "meeting") : IMeetingAudioSource
 {
     MicSubscription? _subscription;
 
-    public void StartCapture() => _subscription = microphone.Subscribe("meeting", deviceId);
+    public void StartCapture() => _subscription = microphone.Subscribe(name, deviceId);
     public void StopCapture() => _subscription?.Dispose();
     public float[] DrainSamples() => _subscription?.Drain() ?? [];
     public double DrainGapSeconds() => _subscription?.DrainGapSeconds() ?? 0;

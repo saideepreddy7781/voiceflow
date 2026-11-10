@@ -15,24 +15,47 @@ public interface IMeetingAudioSource : IDisposable
 }
 
 /// <summary>
-/// Records a meeting: your microphone plus the meeting audio, transcribed while it happens.
+/// Records a meeting: your microphone and the call, transcribed separately while it happens.
 ///
-/// Memory stays small for long meetings: audio is drained from both sources every second (the app calls
-/// <see cref="Tick"/>) and only the chunk still being collected (at most 45 s) is kept. Each chunk is mixed
-/// into one stream, so a meeting costs one upload per chunk, and Whisper's timed segments are labelled
-/// You/Others by comparing the two sources over each segment.
+/// Each side is cut into uploads of voiced audio only (<see cref="StreamChunker"/>), so "You" and "Others" are real
+/// labels, overlapping talk stays apart, and a meeting costs about its own length in audio seconds. The two sides are
+/// merged by time (<see cref="TranscriptMerge"/>). Audio stays in memory: at most the chunk being collected on each
+/// side, plus failed chunks up to <see cref="ChunkHold.CapacitySeconds"/> to retry when the meeting ends.
 /// </summary>
 public sealed class MeetingRecorder
 {
-    public sealed record Settings(string ApiKey, string Model, string? Language, string? ParallelLanguage,
-                                  IReadOnlyList<string> Languages, string? Prompt, string? MicDeviceId, bool RecordSystemAudio);
+    public sealed record Settings(string ApiKey, string Model, IReadOnlyList<string> Languages, WhisperPrompts Prompts,
+                                  string? MicDeviceId, bool RecordSystemAudio);
 
-    public delegate Task<DetailedTranscript> TranscribeFunc(byte[] wav, Settings settings, CancellationToken cancel);
+    /// <summary>One upload: which side it is, and the language to try first.</summary>
+    public sealed record ChunkRequest(Settings Settings, LanguagePlan Plan, string? Hint);
+
+    public delegate Task<DetailedTranscript> TranscribeFunc(byte[] wav, ChunkRequest request, CancellationToken cancel);
+
+    /// <summary>Tries per chunk during the meeting, and again at the end.</summary>
+    internal const int LiveAttempts = 2;
+    internal const int FinalAttempts = 3;
+    /// <summary>Longest Stop spends retrying failed chunks.</summary>
+    internal const double FinalRetrySeconds = 180;
+    /// <summary>With less audio budget than this left in the hour, meetings skip second opinions.</summary>
+    internal const double SecondOpinionHeadroom = 900;
+
+    sealed class Side
+    {
+        public readonly StreamChunker Chunker = new();
+        public readonly StreamLanguageTracker Tracker = new();
+        public string? Language;
+    }
+
+    /// <summary>What came back from Groq for one chunk.</summary>
+    sealed record Attempt(DetailedTranscript? Transcript, Exception? Error);
 
     readonly Func<Settings, IMeetingAudioSource> _makeMic;
     readonly Func<IMeetingAudioSource?> _makeSystem;
     readonly TranscribeFunc _transcribe;
     readonly Func<TimeSpan, Task> _delay;
+    readonly Action<string>? _logError;
+    /// <summary>Guards the meeting, the hold and the language trackers. Queues and chunkers belong to the Tick thread.</summary>
     readonly object _gate = new();
 
     IMeetingAudioSource? _mic;
@@ -40,15 +63,19 @@ public sealed class MeetingRecorder
     Settings? _settings;
     CancellationTokenSource _cancel = new();
 
-    // Audio not yet sent, aligned sample-for-sample.
-    readonly List<float> _pendingMic = new();
-    readonly List<float> _pendingSystem = new();
+    // Audio not yet handed to a chunker, so the two sides stay aligned.
     readonly List<float> _queuedMic = new();
     readonly List<float> _queuedSystem = new();
-    /// <summary>Samples already sent, i.e. the start time of the pending chunk.</summary>
-    int _sentSamples;
-    /// <summary>Appends each chunk's lines in order, exactly once.</summary>
-    Task _appendChain = Task.CompletedTask;
+    /// <summary>Samples of the microphone already handed to its chunker.</summary>
+    int _micFed;
+    Side _micSide = new();
+    Side _callSide = new();
+    readonly List<Task> _uploads = [];
+    readonly Dictionary<long, (TimeMap Map, double Seconds, Speaker Speaker)> _inFlight = [];
+    long _nextUpload;
+    ChunkHold _hold = new();
+    double _lostSeconds;
+    ProviderException? _dailyLimit;
     bool _heardSpeech;
     Meeting? _meeting;
 
@@ -59,10 +86,16 @@ public sealed class MeetingRecorder
     public float SystemLevel { get; private set; }
     /// <summary>Seconds in a row the meeting audio has been digital silence.</summary>
     public int SystemSilentSeconds { get; private set; }
+    /// <summary>The language last heard on your microphone, for the live view.</summary>
+    public string? MicLanguage { get { lock (_gate) return _micSide.Language; } }
+    /// <summary>The language last heard on the call, for the live view.</summary>
+    public string? CallLanguage { get { lock (_gate) return _callSide.Language; } }
     /// <summary>Shorter gaps are normal: a device restarting, a driver catching up.</summary>
     const double MinimumReportedGap = 2;
     /// <summary>Called whenever new transcript lines arrive, with a copy of the meeting.</summary>
     public event Action<Meeting>? Updated;
+    /// <summary>Called once when Groq's daily limit runs out during a meeting, with a sentence for the user. Any thread.</summary>
+    public event Action<string>? DailyLimitReached;
 
     /// <param name="logError">Receives failures for the log. Never given transcript text.</param>
     public MeetingRecorder(Func<Settings, IMeetingAudioSource> makeMic, Func<IMeetingAudioSource?> makeSystem,
@@ -70,24 +103,25 @@ public sealed class MeetingRecorder
     {
         _makeMic = makeMic;
         _makeSystem = makeSystem;
-        _transcribe = transcribe ?? ((wav, s, ct) => new GroqTranscriber(s.ApiKey, s.Model)
-            .TranscribeResolvingAsync(wav, s.Language, s.ParallelLanguage, s.Languages, s.Prompt, sequential: true, cancel: ct));
+        _transcribe = transcribe ?? DefaultTranscribe;
         _delay = delay ?? (t => Task.Delay(t));
         _logError = logError;
     }
 
-    readonly Action<string>? _logError;
+    static Task<DetailedTranscript> DefaultTranscribe(byte[] wav, ChunkRequest request, CancellationToken cancel)
+    {
+        var settings = request.Settings;
+        var plan = request.Plan;
+        // Short on audio budget: one upload per chunk, and auto-detect has the last word.
+        if (GroqGate.Shared.TranscriptionHeadroom(settings.Model) < SecondOpinionHeadroom) plan = plan with { Languages = [] };
+        return new GroqTranscriber(settings.ApiKey, settings.Model)
+            .TranscribeResolvingAsync(wav, plan, settings.Prompts, ResolveMode.SequentialWith(request.Hint), GroqPriority.Background, wordTimestamps: true, cancel);
+    }
 
     public Meeting? Snapshot()
     {
         lock (_gate) return _meeting?.Copy();
     }
-
-    /// <summary>Meeting chunks: 20–45 s, cut at a pause, no overlap (pauses separate sentences).</summary>
-    internal static SegmentCutter MakeCutter() => new()
-    {
-        MinimumSeconds = 20, MaximumSeconds = 45, PauseSeconds = 0.6, OverlapSeconds = 0,
-    };
 
     public void Start(string title, string app, IReadOnlyList<string> attendees, Settings settings)
     {
@@ -121,19 +155,30 @@ public sealed class MeetingRecorder
             }
         }
         else m.MicOnly = true;
-        lock (_gate) _meeting = m;
+        lock (_gate)
+        {
+            _meeting = m;
+            _micSide = new Side();
+            _callSide = new Side();
+            _hold = new ChunkHold();
+            _uploads.Clear();
+            _inFlight.Clear();
+            _lostSeconds = 0;
+            _dailyLimit = null;
+        }
         _settings = settings;
         _cancel = new CancellationTokenSource();
         IsRecording = true;
         _heardSpeech = false;
         SystemSilentSeconds = 0;
-        _pendingMic.Clear(); _pendingSystem.Clear(); _queuedMic.Clear(); _queuedSystem.Clear();
-        _sentSamples = 0;
-        _appendChain = Task.CompletedTask;
+        _queuedMic.Clear();
+        _queuedSystem.Clear();
+        _micFed = 0;
     }
 
     /// <summary>Stops recording and returns the meeting once every chunk is transcribed.</summary>
-    public async Task<Meeting?> StopAsync()
+    /// <param name="retryFailed">False skips the second try for failed chunks, which are marked at once.</param>
+    public async Task<Meeting?> StopAsync(bool retryFailed = true)
     {
         if (!IsRecording) return Snapshot();
         Tick(final: true);
@@ -141,10 +186,18 @@ public sealed class MeetingRecorder
         IsRecording = false;
         MicLevel = 0;
         SystemLevel = 0;
-        lock (_gate) if (_meeting != null) _meeting.End = DateTimeOffset.Now;
-        await _appendChain;
+        Task[] running;
         lock (_gate)
         {
+            if (_meeting != null) _meeting.End = DateTimeOffset.Now;
+            running = _uploads.ToArray();
+            _uploads.Clear();
+        }
+        await Task.WhenAll(running).ConfigureAwait(false);
+        await RetryHeldAsync(retryFailed).ConfigureAwait(false);
+        lock (_gate)
+        {
+            WriteGapNote();
             AddGapLines();
             if (_meeting is { Lines.Count: 0 })
             {
@@ -156,13 +209,20 @@ public sealed class MeetingRecorder
         return Snapshot();
     }
 
-    /// <summary>Stops without waiting for uploads (app exit). Pending chunks are cancelled.</summary>
+    /// <summary>Stops without waiting for uploads (app exit). Pending chunks are marked as lost.</summary>
     public void Abort()
     {
         if (!IsRecording) return;
         _cancel.Cancel();
         StopSources();
         IsRecording = false;
+        lock (_gate)
+        {
+            foreach (var (map, seconds, speaker) in _inFlight.Values) MarkLost(map, seconds, speaker);
+            _inFlight.Clear();
+            foreach (var chunk in _hold.TakeAll()) MarkLost(chunk.Map, chunk.VoicedSeconds, chunk.Speaker);
+            WriteGapNote();
+        }
     }
 
     void StopSources()
@@ -193,13 +253,14 @@ public sealed class MeetingRecorder
         }
         _queuedMic.AddRange(newMic);
         MicLevel = AudioMath.Level(newMic.AsSpan(Math.Max(0, newMic.Length - 1_600)));
+        float[] micSamples, callSamples = [];
         if (_system != null)
         {
             var newSystem = _system.DrainSamples();
             SystemLevel = AudioMath.Level(newSystem.AsSpan(Math.Max(0, newSystem.Length - 1_600)));
             SystemSilentSeconds = newSystem.All(v => v == 0) ? SystemSilentSeconds + 1 : 0;
             _queuedSystem.AddRange(newSystem);
-            // Keep the two sources aligned. Whichever stalls (loopback delivers nothing while nothing plays,
+            // Keep the two sides on one clock. Whichever stalls (loopback delivers nothing while nothing plays,
             // a device restarting) is padded with silence.
             var twoSeconds = (int)AudioMath.SampleRate * 2;
             var lag = _queuedMic.Count - _queuedSystem.Count;
@@ -210,35 +271,23 @@ public sealed class MeetingRecorder
                 _queuedMic.AddRange(new float[-lag]);
             }
             var n = final ? Math.Max(_queuedMic.Count, _queuedSystem.Count) : Math.Min(_queuedMic.Count, _queuedSystem.Count);
-            _pendingMic.AddRange(Take(_queuedMic, n));
-            _pendingSystem.AddRange(Take(_queuedSystem, n));
+            micSamples = Take(_queuedMic, n);
+            callSamples = Take(_queuedSystem, n);
         }
-        else
-        {
-            var n = _queuedMic.Count;
-            _pendingMic.AddRange(Take(_queuedMic, n));
-            _pendingSystem.AddRange(new float[n]);
-        }
+        else micSamples = Take(_queuedMic, _queuedMic.Count);
+        _micFed += micSamples.Length;
 
-        // Send every complete chunk (more than one if audio piled up), never more than 45 s per upload.
-        while (true)
+        foreach (var chunk in _micSide.Chunker.Feed(micSamples)) Send(chunk, Speaker.You);
+        foreach (var chunk in _callSide.Chunker.Feed(callSamples)) Send(chunk, Speaker.Others);
+        if (final)
         {
-            var mixed = SpeakerAttribution.Mix(_pendingMic, _pendingSystem);
-            var cutter = MakeCutter();
-            var range = cutter.NextCut(mixed);
-            if (range == null && final && mixed.Length > 0) range = 0..mixed.Length;   // what's left at Stop (< 45 s)
-            if (range is not { } r) break;
-            int start = r.Start.Value, end = r.End.Value;
-            Send(mixed[start..end], _pendingMic.GetRange(start, end - start).ToArray(), _pendingSystem.GetRange(start, end - start).ToArray());
-            _pendingMic.RemoveRange(0, end);
-            _pendingSystem.RemoveRange(0, end);
-            _sentSamples += end;
-            if (_pendingMic.Count == 0) break;
+            if (_micSide.Chunker.Finish() is { } mine) Send(mine, Speaker.You);
+            if (_callSide.Chunker.Finish() is { } theirs) Send(theirs, Speaker.Others);
         }
     }
 
-    /// <summary>Samples of microphone timeline so far: sent, pending and queued.</summary>
-    int MicTimeline => _sentSamples + _pendingMic.Count + _queuedMic.Count;
+    /// <summary>Samples of microphone timeline so far: fed to the chunker and still queued.</summary>
+    int MicTimeline => _micFed + _queuedMic.Count;
 
     /// <summary>Records that your voice is missing here, so the meeting says so instead of padding silently.</summary>
     void NoteMicGap(int startSample, int samples)
@@ -280,62 +329,177 @@ public sealed class MeetingRecorder
         return head;
     }
 
-    void Send(float[] mixed, float[] mic, float[] system)
+    ChunkRequest RequestFor(Speaker speaker, Settings settings)
     {
-        if (_settings is not { } settings) return;
-        var chunkStart = _sentSamples / AudioMath.SampleRate;
-        if (AudioMath.IsSilent(mixed, minimumVoicedSeconds: 0.5)) return;
-        _heardSpeech = true;
-        var wav = AudioMath.Wav(AudioMath.Normalized(mixed));
-        var cancel = _cancel.Token;
-        var transcribe = _transcribe;
-        var delay = _delay;
-        var log = _logError;
-        var chunk = Task.Run(async () =>
-        {
-            // Up to 4 tries: rate limits are waited out, other errors retried after a short pause.
-            for (int attempt = 1; attempt <= 4; attempt++)
-            {
-                try
-                {
-                    var result = await transcribe(wav, settings, cancel).ConfigureAwait(false);
-                    if (HallucinationFilter.IsLikelyHallucination(result.Text, AudioMath.VoicedSeconds(mixed))) return new List<TranscriptLine>();
-                    return SpeakerAttribution.Lines(result, chunkStart, mic, system);
-                }
-                catch (OperationCanceledException) when (cancel.IsCancellationRequested)
-                {
-                    return new List<TranscriptLine>();
-                }
-                catch (Exception e)
-                {
-                    log?.Invoke($"Meeting chunk failed (try {attempt}): {e.GetType().Name}: {e.Message}");
-                    if (e is ProviderException { Kind: ProviderErrorKind.MissingKey }) break;
-                    if (attempt < 4)
-                    {
-                        var wait = e is ProviderException { Kind: ProviderErrorKind.RateLimited } p
-                            ? Math.Min(60, (p.RetryAfter ?? 10) + 1)
-                            : attempt * 2.0;
-                        await delay(TimeSpan.FromSeconds(wait)).ConfigureAwait(false);
-                    }
-                }
-            }
-            return new List<TranscriptLine> { new(chunkStart, Speaker.Others, "[Part of the meeting could not be transcribed]") };
-        });
-        _appendChain = AppendAfter(_appendChain, chunk);
+        string? hint;
+        lock (_gate) hint = (speaker == Speaker.You ? _micSide : _callSide).Tracker.NextHint();
+        return new ChunkRequest(settings, new LanguagePlan(settings.Languages, speaker == Speaker.You ? PlanSpeaker.User : PlanSpeaker.Anyone), hint);
     }
 
-    async Task AppendAfter(Task previous, Task<List<TranscriptLine>> chunk)
+    void Send(AudioChunk chunk, Speaker speaker)
     {
-        await previous;
-        var lines = await chunk;
-        if (lines.Count == 0) return;
-        Meeting? copy;
+        if (_settings is not { } settings) return;
+        _heardSpeech = true;
+        var request = RequestFor(speaker, settings);
+        var wav = AudioMath.Wav(AudioMath.Normalized(chunk.Samples));
+        var cancel = _cancel.Token;
+        long id;
         lock (_gate)
         {
-            if (_meeting == null) return;
-            _meeting.Lines.AddRange(lines);
-            copy = _meeting.Copy();
+            id = _nextUpload++;
+            _inFlight[id] = (chunk.Map, chunk.VoicedSeconds, speaker);
         }
-        Updated?.Invoke(copy);
+        var upload = Task.Run(async () =>
+        {
+            var attempt = await AttemptAsync(wav, request, LiveAttempts, cancel).ConfigureAwait(false);
+            Finish(attempt, id, chunk, speaker, request);
+        });
+        lock (_gate) _uploads.Add(upload);
+    }
+
+    /// <summary>Rate limits are waited out (<see cref="GroqGate"/> has already waited what it can); other errors retried after a short pause.</summary>
+    async Task<Attempt> AttemptAsync(byte[] wav, ChunkRequest request, int tries, CancellationToken cancel)
+    {
+        Exception last = ProviderException.BadResponse();
+        for (int attempt = 1; attempt <= tries; attempt++)
+        {
+            try
+            {
+                return new Attempt(await _transcribe(wav, request, cancel).ConfigureAwait(false), null);
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+            {
+                return new Attempt(null, new OperationCanceledException());
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                last = e;
+                _logError?.Invoke($"Meeting chunk failed (try {attempt}): {Describe(e)}");
+                if (e is ProviderException { Kind: ProviderErrorKind.MissingKey or ProviderErrorKind.DailyLimit }) break;
+                if (attempt < tries)
+                {
+                    var wait = e is ProviderException { Kind: ProviderErrorKind.RateLimited } p
+                        ? Math.Min(60, (p.RetryAfter ?? 10) + 1)
+                        : attempt * 2.0;
+                    if (wait > 0) await _delay(TimeSpan.FromSeconds(wait)).ConfigureAwait(false);
+                }
+            }
+        }
+        return new Attempt(null, last);
+    }
+
+    /// <summary>Error bodies can echo a request, so the log gets the kind and status only.</summary>
+    static string Describe(Exception e) => e is ProviderException p ? $"{p.Kind} {p.StatusCode}" : e.GetType().Name;
+
+    void Finish(Attempt attempt, long id, AudioChunk chunk, Speaker speaker, ChunkRequest request)
+    {
+        // Abort has already marked this one as lost.
+        if (attempt.Error is OperationCanceledException) return;
+        var notify = new List<Action>();
+        lock (_gate)
+        {
+            _inFlight.Remove(id);
+            if (attempt.Transcript is { } transcript)
+            {
+                Accept(transcript, chunk.Map, chunk.VoicedSeconds, speaker, request, notify);
+            }
+            else
+            {
+                NoteDailyLimit(attempt.Error, notify);
+                if (attempt.Error is ProviderException { Kind: ProviderErrorKind.MissingKey })
+                {
+                    MarkLost(chunk.Map, chunk.VoicedSeconds, speaker, notify);
+                }
+                else
+                {
+                    foreach (var lost in _hold.Add(new HeldChunk(chunk.Samples, chunk.Map, speaker, chunk.VoicedSeconds)))
+                        MarkLost(lost.Map, lost.VoicedSeconds, lost.Speaker, notify);
+                }
+            }
+        }
+        foreach (var action in notify) action();
+    }
+
+    /// <summary>Call with the lock held.</summary>
+    void Accept(DetailedTranscript transcript, TimeMap map, double voicedSeconds, Speaker speaker, ChunkRequest request, List<Action> notify)
+    {
+        var side = speaker == Speaker.You ? _micSide : _callSide;
+        side.Language = transcript.Language ?? side.Language;
+        // A forced language produced this if it isn't what auto-detect would be trusted to say on its own.
+        var viaOpinion = request.Hint != null || (transcript.Language is { } l && l != "en" && request.Plan.Languages.Contains(l));
+        side.Tracker.Observe(transcript.Language, viaOpinion, request.Plan.Languages);
+        if (HallucinationFilter.IsLikelyHallucination(transcript.Text, voicedSeconds)) return;
+        Append(ChunkLines.Lines(transcript, map, speaker, map.MeetingTime(0)), notify);
+    }
+
+    /// <summary>Call with the lock held.</summary>
+    void Append(List<TranscriptLine> lines, List<Action> notify)
+    {
+        if (lines.Count == 0 || _meeting == null) return;
+        _meeting.Lines = TranscriptMerge.Merge(_meeting.Lines, lines);
+        var copy = _meeting.Copy();
+        notify.Add(() => Updated?.Invoke(copy));
+    }
+
+    /// <summary>Call with the lock held.</summary>
+    void MarkLost(TimeMap map, double seconds, Speaker speaker, List<Action>? notify = null)
+    {
+        _lostSeconds += seconds;
+        Append([new TranscriptLine(map.MeetingTime(0), speaker, TranscriptFilter.LostMarker)], notify ?? []);
+    }
+
+    /// <summary>Call with the lock held.</summary>
+    void NoteDailyLimit(Exception? error, List<Action> notify)
+    {
+        if (error is not ProviderException { Kind: ProviderErrorKind.DailyLimit } e || _dailyLimit != null) return;
+        _dailyLimit = e;
+        notify.Add(() => DailyLimitReached?.Invoke($"{e.Message} The rest of this meeting can't be transcribed until then."));
+    }
+
+    /// <summary>Second chance for chunks that failed. The marker appears only for what is still lost after this.</summary>
+    async Task RetryHeldAsync(bool enabled)
+    {
+        List<HeldChunk> waiting;
+        lock (_gate) waiting = _hold.TakeAll();
+        if (waiting.Count == 0 || _settings is not { } settings) return;
+        var deadline = DateTime.UtcNow.AddSeconds(FinalRetrySeconds);
+        foreach (var chunk in waiting)
+        {
+            var notify = new List<Action>();
+            bool giveUp;
+            lock (_gate) giveUp = !enabled || _dailyLimit != null || DateTime.UtcNow >= deadline;
+            if (giveUp)
+            {
+                lock (_gate) MarkLost(chunk.Map, chunk.VoicedSeconds, chunk.Speaker, notify);
+                foreach (var action in notify) action();
+                continue;
+            }
+            var request = RequestFor(chunk.Speaker, settings);
+            var wav = AudioMath.Wav(AudioMath.Normalized(chunk.FloatSamples));
+            var result = await AttemptAsync(wav, request, FinalAttempts, CancellationToken.None).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (result.Transcript is { } transcript)
+                {
+                    Accept(transcript, chunk.Map, chunk.VoicedSeconds, chunk.Speaker, request, notify);
+                }
+                else
+                {
+                    NoteDailyLimit(result.Error, notify);
+                    MarkLost(chunk.Map, chunk.VoicedSeconds, chunk.Speaker, notify);
+                }
+            }
+            foreach (var action in notify) action();
+        }
+    }
+
+    /// <summary>Call with the lock held.</summary>
+    void WriteGapNote()
+    {
+        if (_lostSeconds <= 0 || _meeting == null) return;
+        var minutes = Math.Max(1, (int)Math.Round(_lostSeconds / 60, MidpointRounding.AwayFromZero));
+        _meeting.Note = _dailyLimit is { } limit
+            ? $"{limit.Message} About {minutes} min of speech could not be transcribed."
+            : $"About {minutes} min of speech could not be transcribed after retrying.";
     }
 }

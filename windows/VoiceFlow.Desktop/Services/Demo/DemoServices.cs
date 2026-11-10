@@ -72,6 +72,8 @@ sealed class DemoHistory : IHistoryService
 
     public void Delete(Guid id) { _entries.RemoveAll(e => e.Id == id); Changed?.Invoke(this, EventArgs.Empty); }
 
+    public void ClearAll() { _entries.Clear(); Changed?.Invoke(this, EventArgs.Empty); }
+
     public void ToggleFlag(Guid id)
     {
         var e = _entries.First(x => x.Id == id);
@@ -209,6 +211,8 @@ sealed class DemoMeetings : IMeetingsService
     public NotetakerState State { get; private set; } = NotetakerState.Idle;
     public double MicLevel { get; private set; }
     public double SystemLevel { get; private set; }
+    public string? MicLanguage => Live == null ? null : "en";
+    public string? CallLanguage => Live == null ? null : "te";
     public MicHealth MicHealth => MicLevel > 0.02 || Live == null ? MicHealth.Good : MicHealth.Quiet;
     public string? NotesFolder => "D:\\Notes\\Meetings";
     public event EventHandler? Changed;
@@ -253,7 +257,7 @@ sealed class DemoMeetings : IMeetingsService
     Meeting Find(Guid id) => _meetings.First(m => m.Id == id);
 
     public void Rename(Guid id, string title) { Find(id).Title = title; Changed?.Invoke(this, EventArgs.Empty); }
-    public void RenameSpeaker(Guid id, Speaker speaker, string name) { Find(id).SpeakerNames[speaker] = name; Changed?.Invoke(this, EventArgs.Empty); }
+    public void RenameSpeaker(Guid id, Speaker speaker, string name) { if (name.Trim().Length == 0) Find(id).SpeakerNames.Remove(speaker); else Find(id).SpeakerNames[speaker] = name; Changed?.Invoke(this, EventArgs.Empty); }
 
     public void ToggleActionItem(Guid id, Guid itemId)
     {
@@ -445,6 +449,8 @@ public sealed class DemoDictation : IDictationService
     public void Cancel() => Set(FlowPhase.Idle);
     public void Confirm() => Set(FlowPhase.Processing, Levels);
     public void StopMeeting() => Set(FlowPhase.Idle);
+    public int OpenMeetingsCount { get; private set; }
+    public void OpenMeetings() => OpenMeetingsCount++;
     public void DismissToast() => Set(Phase, Levels);
 }
 

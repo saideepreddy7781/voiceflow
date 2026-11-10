@@ -155,6 +155,27 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
           </StackPanel>
+          <StackPanel Spacing="8" IsVisible="{Binding SpeaksHindi}">
+            <TextBlock Text="Write Hindi as" Classes="callout" FontWeight="SemiBold"/>
+            <ItemsControl ItemsSource="{Binding HindiOptions}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="8"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:HindiScriptOption">
+                  <RadioButton Theme="{StaticResource OptionCard}" GroupName="obhindi" IsChecked="{Binding IsSelected}" Padding="16,12" AutomationProperties.Name="{Binding Name}">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="Medium"/>
+                        <TextBlock Text="{Binding Example}" Classes="callout muted wrap"/>
+                      </StackPanel>
+                      <PathIcon Grid.Column="1" Data="{StaticResource IconCheckmarkCircle}" Width="18" Height="18" IsVisible="{Binding IsSelected}" Margin="12,0,0,0"/>
+                    </Grid>
+                  </RadioButton>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
         </StackPanel>
       </ScrollViewer>
 

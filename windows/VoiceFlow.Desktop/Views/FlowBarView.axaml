@@ -32,6 +32,16 @@
       <Setter Property="Padding" Value="12,4"/>
       <Setter Property="MinHeight" Value="24"/>
     </Style>
+    <Style Selector="Button.barChip">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="11"/>
+      <Setter Property="Padding" Value="4,2"/>
+      <Setter Property="MinHeight" Value="22"/>
+    </Style>
+    <Style Selector="Button.barChip:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="#1FFFFFFF"/>
+    </Style>
     <Style Selector="Button.barPrimary">
       <Setter Property="Background" Value="#FFFFFF"/>
       <Setter Property="Foreground" Value="#000000"/>
@@ -75,12 +85,16 @@
     </Button>
 
     <!-- Recording chip while Notetaker runs -->
-    <Border Classes="barFill" CornerRadius="16" Padding="12,0,4,0" MinHeight="30" HorizontalAlignment="Center" IsVisible="{Binding ShowMeetingChip}"
+    <Border Classes="barFill" CornerRadius="16" Padding="8,0,4,0" MinHeight="30" HorizontalAlignment="Center" IsVisible="{Binding ShowMeetingChip}"
             BorderBrush="#7FF2613F">
       <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-        <Ellipse Classes="recdot"/>
-        <TextBlock Text="{Binding MeetingClock}" FontSize="12" FontWeight="SemiBold" Foreground="#FFFFFF" VerticalAlignment="Center"/>
-        <TextBlock Text="Notetaker" FontSize="11" Foreground="#B3FFFFFF" VerticalAlignment="Center"/>
+        <Button Classes="barChip" Command="{Binding OpenMeetingsCommand}" ToolTip.Tip="Open Meetings" AutomationProperties.Name="Open the Meetings page">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Ellipse Classes="recdot"/>
+            <TextBlock Text="{Binding MeetingClock}" FontSize="12" FontWeight="SemiBold" Foreground="#FFFFFF" VerticalAlignment="Center"/>
+            <TextBlock Text="Notetaker" FontSize="11" Foreground="#B3FFFFFF" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
         <Button Classes="barRound barPrimary" Command="{Binding StopMeetingCommand}" ToolTip.Tip="Stop and write notes" AutomationProperties.Name="Stop recording and write notes">
           <Border Classes="stopGlyph" Width="8" Height="8" Background="#000000"/>
         </Button>

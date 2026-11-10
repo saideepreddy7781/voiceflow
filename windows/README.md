@@ -85,6 +85,10 @@ attaches to the parent console when run from `cmd.exe`.
 - **Scratchpad:** **Alt + Shift + S** opens it, and pressing it again while it is in front hides it. The macOS shortcut is Option + S, but Alt + S drives app menus on Windows, so this uses the same Alt + Shift family as Paste last.
 - **Flow bar:** appears at the bottom centre of the active monitor only while you dictate, while a toast is up, or as a small chip during a meeting. It never takes focus, and clicks pass through it except on its buttons and toasts. Settings → System can keep a resting bar on screen; it is off by default.
 - **Meetings:** when Zoom, Teams, Meet, Webex or a similar app is in a call, a toast offers to take notes. VoiceFlow only asks; recording starts only when you click. Turn it off in Settings → Notetaker.
+- **Two sides of a call:** your microphone and the call are transcribed separately, so You and Others are real labels. Only voiced audio is uploaded. A chunk that fails is held in memory (never on disk, at most 20 minutes of audio) and retried at Stop. What is still lost is marked in the transcript. If the default speakers or headset change during a call, the recording follows them.
+- **Meetings page:** search covers titles, notes and transcripts and shows where it matched. You can rename Others per meeting, tick action items (ticks survive Rewrite notes) and copy the notes as Markdown. The live view shows the language last heard on each side. Clicking the chip on the Flow bar opens this page.
+- **Languages:** pick every language you speak in Settings → General. With one language, Whisper is told which. With several, it auto-detects and the result is checked against your list, as described in `docs/LANGUAGE-PIPELINE.md`. Telugu and Hindi each have a writing choice, which applies to dictation and to meeting transcripts.
+- **Free-tier limits:** every Groq request goes through one queue. Meeting work leaves room for dictation, so a long call never makes dictation wait. If a daily limit runs out, VoiceFlow says when it resets and keeps your transcript, and notes move to a second model when the first one is out.
 - **Text before the cursor** (about 120 characters, read through UI Automation with a timeout) improves cleanup and adds a space when you dictate mid-sentence. It is never read from password fields, password managers or terminals.
 - **Learning:** if you fix a dictated word within 15 seconds and it looks like a name or term, it joins your dictionary, with Undo. Turn it off in Settings → Advanced.
 - **File tags:** in Cursor and Windsurf, a spoken file name from the open project becomes an @file tag.
@@ -101,6 +105,7 @@ Dictations finish automatically at 20 minutes. Recordings under half a second ar
 - The log in `%LOCALAPPDATA%\VoiceFlow\logs` records outcomes and timings, not what you said. Debug logging (off by default) can include dictated text.
 - VoiceFlow never types into password fields (UI Automation), password managers, or Windows credential prompts.
 - If you switch windows while a dictation is processing, the text is not pasted into the new window. It is kept for Paste last and placed on the clipboard.
+- Settings → Data & Privacy has Clear all history, which asks first.
 - The text VoiceFlow pastes is marked to stay out of Win+V clipboard history and cloud clipboard, and your previous clipboard is put back about 500 ms later.
 - In terminals, line breaks are turned into spaces, so dictated text never runs a command. Control characters and bidirectional overrides are removed everywhere.
 - Update checks ask `api.github.com` for the latest release; GitHub sees your IP address and nothing else about you. Turn them off in Settings → About.

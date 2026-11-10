@@ -26,8 +26,12 @@ public static class GroqHttp
     }
 
     /// <summary>Sends a request with a timeout and maps failures to <see cref="ProviderException"/>.</summary>
-    public static async Task<byte[]> SendAsync(HttpClient client, Func<HttpRequestMessage> build, TimeSpan timeout,
-                                               CancellationToken cancel)
+    public static async Task<byte[]> SendAsync(HttpClient client, Func<HttpRequestMessage> build, TimeSpan timeout, CancellationToken cancel) =>
+        (await SendDetailedAsync(client, build, timeout, cancel).ConfigureAwait(false)).Data;
+
+    /// <summary>The same, with the response headers, which carry Groq's rate limits.</summary>
+    public static async Task<GroqResponse> SendDetailedAsync(HttpClient client, Func<HttpRequestMessage> build, TimeSpan timeout,
+                                                             CancellationToken cancel)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         cts.CancelAfter(timeout);
@@ -63,13 +67,22 @@ public static class GroqHttp
             switch ((int)response.StatusCode)
             {
                 case 200:
-                    return data;
+                    return new GroqResponse(data, Headers(response));
                 case 429:
+                    if (GroqLimitMessage.DailyResource(System.Text.Encoding.UTF8.GetString(data)) is { } resource)
+                        throw ProviderException.DailyLimit(resource, RetryAfter(response));
                     throw ProviderException.RateLimited(RetryAfter(response));
                 default:
                     throw ProviderException.Http((int)response.StatusCode, System.Text.Encoding.UTF8.GetString(data));
             }
         }
+    }
+
+    static Dictionary<string, string> Headers(HttpResponseMessage response)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, values) in response.Headers) headers[name] = string.Join(",", values);
+        return headers;
     }
 
     static double? RetryAfter(HttpResponseMessage response)
@@ -80,5 +93,21 @@ public static class GroqHttp
             if (raw != null && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)) return seconds;
         }
         return response.Headers.RetryAfter?.Delta?.TotalSeconds;
+    }
+}
+
+/// <summary>A successful Groq response.</summary>
+public sealed record GroqResponse(byte[] Data, IReadOnlyDictionary<string, string> Headers);
+
+/// <summary>Reads Groq's rate-limit error text, e.g. "...on tokens per day (TPD): Limit 200000, Used 199000...".</summary>
+internal static class GroqLimitMessage
+{
+    internal static string? DailyResource(string body)
+    {
+        var b = body.ToLowerInvariant();
+        if (!b.Contains("per day") && !b.Contains("(tpd)") && !b.Contains("(rpd)") && !b.Contains("(aspd)")) return null;
+        if (b.Contains("seconds of audio") || b.Contains("aspd")) return "transcription";
+        if (b.Contains("requests per day") || b.Contains("rpd")) return "requests";
+        return "tokens";
     }
 }

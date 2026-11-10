@@ -30,13 +30,13 @@ public sealed partial class SettingsNav : ObservableObject
 
 public sealed partial class SettingsViewModel : ObservableObject
 {
-    public SettingsViewModel(IAppServices services, Action runSetup)
+    public SettingsViewModel(IAppServices services, Action runSetup, Action<object?>? showDialog = null)
     {
         General = new GeneralSettings(services);
         Notetaker = new NotetakerSettings(services);
         System = new SystemSettings(services);
         Keys = new KeysSettings(services);
-        Privacy = new PrivacySettings(services);
+        Privacy = new PrivacySettings(services, showDialog ?? (_ => { }));
         Advanced = new AdvancedSettings(services, runSetup);
         About = new AboutSettings(services);
         Sections =
@@ -120,6 +120,28 @@ public sealed partial class TeluguScriptOption : ObservableObject
     partial void OnIsSelectedChanged(bool value) { if (value) _select(Script); }
 }
 
+public sealed partial class HindiScriptOption : ObservableObject
+{
+    readonly Action<HindiScript> _select;
+
+    public HindiScriptOption(HindiScript script, bool selected, Action<HindiScript> select)
+    {
+        Script = script;
+        Name = EnumText.DisplayName(script);
+        Example = EnumText.Example(script);
+        _isSelected = selected;
+        _select = select;
+    }
+
+    public HindiScript Script { get; }
+    public string Name { get; }
+    public string Example { get; }
+
+    [ObservableProperty] bool _isSelected;
+
+    partial void OnIsSelectedChanged(bool value) { if (value) _select(Script); }
+}
+
 public sealed class ShortcutRow(string action, params string[] keys)
 {
     public string Action { get; } = action;
@@ -141,6 +163,8 @@ public sealed partial class GeneralSettings : ObservableObject
             AllLanguages.Add(new LanguageItem(code, name, chosen.Contains(code), SaveLanguages));
         ScriptOptions = Enum.GetValues<TeluguScript>()
             .Select(s => new TeluguScriptOption(s, s == Prefs.TeluguScript, SelectScript)).ToList();
+        HindiOptions = Enum.GetValues<HindiScript>()
+            .Select(s => new HindiScriptOption(s, s == Prefs.HindiScript, SelectHindi)).ToList();
         _testLevel = services.Microphone.TestLevel;
         _isTesting = services.Microphone.IsTesting;
         services.Microphone.TestLevelChanged += (_, _) =>
@@ -156,6 +180,7 @@ public sealed partial class GeneralSettings : ObservableObject
     public IReadOnlyList<Choice<Hotkey>> HotkeyChoices { get; }
     public IReadOnlyList<Choice<CleanupLevel>> CleanupChoices { get; }
     public IReadOnlyList<TeluguScriptOption> ScriptOptions { get; }
+    public IReadOnlyList<HindiScriptOption> HindiOptions { get; }
     public List<LanguageItem> AllLanguages { get; } = [];
     public IEnumerable<LanguageItem> VisibleLanguages => ShowAllLanguages ? AllLanguages : AllLanguages.Take(PopularLanguages);
 
@@ -172,11 +197,12 @@ public sealed partial class GeneralSettings : ObservableObject
             var picked = AllLanguages.Where(l => l.IsSelected).ToList();
             return picked.Count == 1
                 ? $"VoiceFlow listens for {picked[0].Name}."
-                : "VoiceFlow detects the language automatically. Choosing just one is most accurate.";
+                : "Pick every language you speak. VoiceFlow detects which one you're using and checks it against this list. In meetings, other people can speak anything.";
         }
     }
 
     public bool SpeaksTelugu => Prefs.SpeaksTelugu;
+    public bool SpeaksHindi => Prefs.SpeaksHindi;
 
     public Choice<Hotkey> SelectedHotkey
     {
@@ -224,6 +250,13 @@ public sealed partial class GeneralSettings : ObservableObject
         _services.Preferences.Update(p => p.Languages = AllLanguages.Where(l => l.IsSelected).Select(l => l.Code).ToList());
         OnPropertyChanged(nameof(LanguagesHint));
         OnPropertyChanged(nameof(SpeaksTelugu));
+        OnPropertyChanged(nameof(SpeaksHindi));
+    }
+
+    void SelectHindi(HindiScript script)
+    {
+        foreach (var o in HindiOptions) if (o.Script != script) o.IsSelected = false;
+        _services.Preferences.Update(p => p.HindiScript = script);
     }
 
     void SelectScript(TeluguScript script)
@@ -419,10 +452,12 @@ public sealed partial class KeyField : ObservableObject
 public sealed partial class PrivacySettings : ObservableObject
 {
     readonly IAppServices _services;
+    readonly Action<object?> _showDialog;
 
-    public PrivacySettings(IAppServices services)
+    public PrivacySettings(IAppServices services, Action<object?> showDialog)
     {
         _services = services;
+        _showDialog = showDialog;
         RetentionChoices =
         [
             new("Forever", -1), new("30 days", 30), new("7 days", 7), new("Never store my data", 0),
@@ -451,6 +486,14 @@ public sealed partial class PrivacySettings : ObservableObject
 
     [RelayCommand]
     void OpenDataFolder() => _services.Shell.OpenDataFolder();
+
+    [RelayCommand]
+    void AskClearHistory() => _showDialog(new ConfirmDialogViewModel(
+        "Clear all history?",
+        "Every dictation is removed from this PC. Your dictionary, snippets and meetings stay.",
+        "Clear history",
+        () => { _services.History.ClearAll(); _showDialog(null); },
+        () => _showDialog(null)));
 
     [RelayCommand]
     void OpenGroqDataControls() => _services.Shell.OpenUrl("https://console.groq.com/settings/data-controls");

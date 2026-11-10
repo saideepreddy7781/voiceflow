@@ -210,7 +210,7 @@ internal static class SelfTest
     static string Prompt()
     {
         Assert(!CleanupPrompt.System.Contains('\r'), "the cleanup prompt has CR characters (CRLF checkout not normalized)");
-        Assert(CleanupPrompt.System.Length == 4370, $"cleanup prompt is {CleanupPrompt.System.Length} characters, expected 4370");
+        Assert(CleanupPrompt.System.Length == 5388, $"cleanup prompt is {CleanupPrompt.System.Length} characters, expected 5388");
         return "cleanup prompt matches the macOS length with LF line endings";
     }
 

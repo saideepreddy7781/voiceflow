@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using VoiceFlow.Core.Library;
 using VoiceFlow.Core.Meetings;
+using VoiceFlow.Core.Speech;
 
 namespace VoiceFlow.Core;
 
@@ -34,6 +35,17 @@ public enum TeluguScript
     Mixed,
     /// <summary>nenu repu office ki vastanu</summary>
     Roman,
+}
+
+/// <summary>How Hindi dictation and meeting transcripts are written.</summary>
+public enum HindiScript
+{
+    /// <summary>मैं कल ऑफिस आऊँगा</summary>
+    Devanagari,
+    /// <summary>मैं कल office आऊँगा</summary>
+    Mixed,
+    /// <summary>main kal office aaunga</summary>
+    Hinglish,
 }
 
 public enum CleanupLevel { None, Light, Medium }
@@ -75,6 +87,23 @@ public static class EnumText
     /// <summary>The word used in the cleanup prompt's &lt;telugu&gt; tag.</summary>
     public static string PromptName(TeluguScript t) => Raw(t);
 
+    public static string DisplayName(HindiScript h) => h switch
+    {
+        HindiScript.Devanagari => "Devanagari",
+        HindiScript.Mixed => "Hindi + English words",
+        _ => "Hinglish (English letters)",
+    };
+
+    public static string Example(HindiScript h) => h switch
+    {
+        HindiScript.Devanagari => "मैं कल ऑफिस आऊँगा, मीटिंग दस बजे है।",
+        HindiScript.Mixed => "मैं कल office आऊँगा, meeting 10 बजे है।",
+        _ => "Main kal office aaunga, meeting 10 baje hai.",
+    };
+
+    /// <summary>The word used in the cleanup prompt's &lt;hindi&gt; tag.</summary>
+    public static string PromptName(HindiScript h) => Raw(h);
+
     public static string DisplayName(CleanupLevel l) => l switch
     {
         CleanupLevel.None => "None",
@@ -110,6 +139,7 @@ public sealed class Preferences : IEquatable<Preferences>
     /// <summary>Languages you speak (Whisper codes). One is passed to Whisper; none or several means auto-detect.</summary>
     public List<string> Languages { get; set; } = ["en"];
     public TeluguScript TeluguScript { get; set; } = TeluguScript.Mixed;
+    public HindiScript HindiScript { get; set; } = HindiScript.Mixed;
     public CleanupLevel CleanupLevel { get; set; } = CleanupLevel.Light;
     public bool CommandModeEnabled { get; set; } = true;
     /// <summary>Adds a word to the dictionary when you correct it right after dictating.</summary>
@@ -152,13 +182,11 @@ public sealed class Preferences : IEquatable<Preferences>
     /// <summary>The language sent to Whisper: the one language you chose, or null (auto-detect).</summary>
     public string? WhisperLanguage => Languages.Count == 1 ? Languages[0] : null;
 
-    /// <summary>
-    /// With several languages, the one transcribed in parallel with auto-detect: your first language other
-    /// than English. Null when there is only one language.
-    /// </summary>
-    public string? ParallelLanguage => Languages.Count > 1 ? (Languages.FirstOrDefault(l => l != "en") ?? Languages[0]) : null;
+    /// <summary>Who might be speaking and what they might speak, for the resolver.</summary>
+    public LanguagePlan LanguagePlanFor(PlanSpeaker speaker = PlanSpeaker.User) => new(Languages, speaker);
 
     public bool SpeaksTelugu => Languages.Contains("te");
+    public bool SpeaksHindi => Languages.Contains("hi");
 
     public bool Equals(Preferences? other) =>
         other is not null && ToJson() == other.ToJson();
@@ -183,6 +211,7 @@ public sealed class Preferences : IEquatable<Preferences>
             ["geminiModel"] = GeminiModel,
             ["languages"] = new JsonArray(Languages.Select(l => (JsonNode?)JsonValue.Create(l)).ToArray()),
             ["teluguScript"] = EnumText.Raw(TeluguScript),
+            ["hindiScript"] = EnumText.Raw(HindiScript),
             ["cleanupLevel"] = EnumText.Raw(CleanupLevel),
             ["commandModeEnabled"] = CommandModeEnabled,
             ["autoLearnWords"] = AutoLearnWords,
@@ -244,6 +273,7 @@ public sealed class Preferences : IEquatable<Preferences>
             p.Languages = old.Length == 0 ? [] : [old];
         }
         E<TeluguScript>("teluguScript", v => p.TeluguScript = v);
+        E<HindiScript>("hindiScript", v => p.HindiScript = v);
         if (EnumText.TryParse<CleanupLevel>(Str(o, "cleanupLevel"), out var level)) p.CleanupLevel = level;
         else if (Bool(o, "cleanupEnabled") == false) p.CleanupLevel = CleanupLevel.None;
         p.CommandModeEnabled = Bool(o, "commandModeEnabled") ?? p.CommandModeEnabled;
@@ -305,6 +335,14 @@ public static class Languages
         foreach (var (code, display) in Options)
             if (display.ToLowerInvariant() == n) return code;
         return null;
+    }
+
+    /// <summary>The name shown for a language code, or the code when the language isn't in the list.</summary>
+    public static string DisplayName(string code)
+    {
+        foreach (var (c, name) in Options)
+            if (c == code) return name;
+        return code;
     }
 
     public static readonly (string Code, string Name)[] Options =

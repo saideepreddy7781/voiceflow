@@ -684,7 +684,7 @@ public class DeliveryDiagnosticsTests
 
 public class MeetingMicGapTests
 {
-    static readonly MeetingRecorder.Settings Settings = new("gsk_test", "whisper-large-v3-turbo", null, null, [], null, null, true);
+    static readonly MeetingRecorder.Settings Settings = new("gsk_test", "whisper-large-v3-turbo", [], new WhisperPrompts(), null, true);
     static Task NoWait(TimeSpan _) => Task.CompletedTask;
     static float[] Speech(double s) => Enumerable.Range(0, (int)(s * 16_000)).Select(i => 0.3f * MathF.Sin(i * 0.2f)).ToArray();
 

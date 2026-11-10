@@ -19,6 +19,7 @@
           </c:SettingRow>
           <Grid ColumnDefinitions="Auto,8,Auto" Margin="0,12">
             <Button Content="Show data folder" Command="{Binding OpenDataFolderCommand}"/>
+            <Button Grid.Column="2" Content="Clear all history" Command="{Binding AskClearHistoryCommand}"/>
           </Grid>
         </StackPanel>
       </Border>

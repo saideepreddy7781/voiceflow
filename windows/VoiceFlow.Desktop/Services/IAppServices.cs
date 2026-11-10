@@ -43,6 +43,8 @@ public interface IHistoryService
     event EventHandler? Changed;
     void Delete(Guid id);
     void ToggleFlag(Guid id);
+    /// <summary>Removes every entry. The caller asks first.</summary>
+    void ClearAll();
     /// <summary>Types the text into the app that was last focused.</summary>
     Task PasteAsync(string text);
 }
@@ -71,6 +73,10 @@ public interface IMeetingsService
     double MicLevel { get; }
     /// <summary>Live meeting-audio level, 0 to 1.</summary>
     double SystemLevel { get; }
+    /// <summary>The language last heard on your microphone, as a Whisper code.</summary>
+    string? MicLanguage { get; }
+    /// <summary>The language last heard on the call, as a Whisper code.</summary>
+    string? CallLanguage { get; }
     MicHealth MicHealth { get; }
     string? NotesFolder { get; }
     /// <summary>Raised when the list, the live meeting or the state changes.</summary>
@@ -178,6 +184,8 @@ public interface IDictationService
     void Cancel();
     void Confirm();
     void StopMeeting();
+    /// <summary>Opens the Meetings page (a click on the recording chip).</summary>
+    void OpenMeetings();
     void DismissToast();
 }
 

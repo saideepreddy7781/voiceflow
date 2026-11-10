@@ -128,6 +128,13 @@ internal sealed class TextInserter(ClipboardService clipboard)
             var after = await FocusInfo.ReadFieldAsync(IntPtr.Zero, readValue: true, timeoutMs: 200);
             last = InsertionPolicy.Verify(before, after.Value, text);
             if (last == PasteCheck.Verified) break;
+            // Word and web editors have no value to read. The text before the caret can still confirm the paste.
+            var remaining = (int)(until - DateTime.UtcNow).TotalMilliseconds;
+            if (after.Value == null && after.State == FieldState.Normal && remaining >= 60)
+            {
+                last = InsertionPolicy.VerifyCaret(await FocusInfo.BeforeCursorAsync(Math.Min(150, remaining)), text);
+                if (last == PasteCheck.Verified) break;
+            }
         }
         return last;
     }

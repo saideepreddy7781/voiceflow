@@ -4,6 +4,7 @@ using VoiceFlow.Core.AI;
 using VoiceFlow.Core.Audio;
 using VoiceFlow.Core.Diagnostics;
 using VoiceFlow.Core.Meetings;
+using VoiceFlow.Core.Speech;
 using VoiceFlow.Windows.Audio;
 using VoiceFlow.Windows.Dictation;
 using VoiceFlow.Windows.Shell;
@@ -42,6 +43,9 @@ internal sealed class Notetaker : IDisposable
     public bool IsRecording => Current == State.Recording;
     public float MicLevel => _recorder.MicLevel;
     public float SystemLevel => _recorder.SystemLevel;
+    /// <summary>The language last heard on each side, for the live view.</summary>
+    public string? MicLanguage => _recorder.MicLanguage;
+    public string? CallLanguage => _recorder.CallLanguage;
     /// <summary>The shared microphone's state, for a status line in the UI.</summary>
     public MicHealthSnapshot MicHealth => _microphone.Health;
 
@@ -69,10 +73,11 @@ internal sealed class Notetaker : IDisposable
         }).ToList();
         _recorder = new MeetingRecorder(
             s => new SharedMicMeetingSource(_microphone, s.MicDeviceId),
-            () => new CaptureMeetingSource(null, loopback: true),
+            () => new SharedMicMeetingSource(LoopbackHub.Shared, null, "meeting audio"),
             logError: message => Logger.Error(message));
         // Updates are raised from the upload chain; state is only touched on the UI thread.
         _recorder.Updated += meeting => Dispatcher.UIThread.Post(() => OnUpdate(meeting));
+        _recorder.DailyLimitReached += message => Dispatcher.UIThread.Post(() => _bar.Show("Groq's daily limit ran out", message, seconds: 12));
         _onMicHealth = health => Dispatcher.UIThread.Post(() => OnMicHealth(health));
         _microphone.HealthChanged += _onMicHealth;
         _tick.Tick += (_, _) => Tick();
@@ -132,8 +137,8 @@ internal sealed class Notetaker : IDisposable
         }
         var prefs = _model.Preferences;
         var settings = new MeetingRecorder.Settings(
-            key, prefs.TranscriptionModel, prefs.WhisperLanguage, prefs.ParallelLanguage, prefs.Languages,
-            NameExtractor.WhisperPrompt(_model.DictionaryTerms, []),
+            key, prefs.TranscriptionModel, prefs.Languages,
+            new WhisperPrompts(_model.DictionaryTerms.ToList(), prefs.TeluguScript, prefs.HindiScript),
             prefs.InputDeviceId.Length == 0 ? null : prefs.InputDeviceId, prefs.MeetingsSystemAudio);
         try
         {
@@ -215,8 +220,8 @@ internal sealed class Notetaker : IDisposable
     {
         if (Current != State.Recording) return;
         _tick.Stop();
-        var meeting = _recorder.Snapshot();
         _recorder.Abort();
+        var meeting = _recorder.Snapshot();
         Current = State.Idle;
         if (meeting == null) return;
         meeting.Status = MeetingStatus.Failed;
@@ -252,9 +257,12 @@ internal sealed class Notetaker : IDisposable
         }
         try
         {
-            var notes = await new MeetingNotesWriter(new GroqChat(key), _model.Preferences.CommandModel)
-                .WriteAsync(meeting, _model.Preferences.MeetingsNotesLanguage);
-            meeting.Notes = notes;
+            var prefs = _model.Preferences;
+            var chat = new GroqChat(key);
+            await RewriteScriptAsync(meeting, chat, prefs);
+            var notes = await new MeetingNotesWriter(chat, prefs.CommandModel)
+                .WriteAsync(meeting, prefs.MeetingsNotesLanguage, prefs.TeluguScript, prefs.HindiScript);
+            meeting.Notes = notes.CarryingOverDone(meeting.Notes);
             if ((meeting.Title == "Meeting" || meeting.Title.EndsWith("meeting", StringComparison.Ordinal)) && notes.Title.Length > 0)
                 meeting.Title = notes.Title;
             meeting.Status = MeetingStatus.Done;
@@ -265,10 +273,30 @@ internal sealed class Notetaker : IDisposable
         catch (ProviderException e)
         {
             meeting.Status = MeetingStatus.Failed;
-            meeting.Error = e.Message;
+            if (e.Kind == ProviderErrorKind.DailyLimit)
+            {
+                meeting.Error = $"{e.Message} Your transcript is saved. Press Try again after that.";
+                _bar.Show("Notes are waiting on Groq's daily limit", meeting.Error, seconds: 10);
+            }
+            else meeting.Error = e.Message;
             SaveToFolder(meeting);
             Save();
         }
+    }
+
+    /// <summary>Applies the Telugu and Hindi writing choices to a newly recorded transcript. Older meetings stay as they are.</summary>
+    async Task RewriteScriptAsync(Meeting meeting, GroqChat chat, Preferences prefs)
+    {
+        if (meeting.ScriptRewritten == true || !meeting.Lines.Any(l => l.Language != null)) return;
+        TeluguScript? telugu = prefs.SpeaksTelugu ? prefs.TeluguScript : null;
+        HindiScript? hindi = prefs.SpeaksHindi ? prefs.HindiScript : null;
+        if (telugu == null && hindi == null) return;
+        var result = await new TranscriptScriptWriter(chat, prefs.CleanupModel).RewriteAsync(meeting.Lines, telugu, hindi);
+        if (!Meetings.Contains(meeting)) return;
+        meeting.Lines = result.Lines;
+        meeting.ScriptRewritten = result.Note == null;
+        if (result.Note != null) meeting.Note = meeting.Note == null ? result.Note : $"{meeting.Note} {result.Note}";
+        Save();
     }
 
     // MARK: Editing
@@ -285,8 +313,10 @@ internal sealed class Notetaker : IDisposable
     public void RenameSpeaker(Guid id, Speaker speaker, string name)
     {
         var meeting = Meetings.FirstOrDefault(m => m.Id == id);
-        if (meeting == null || name.Trim().Length == 0) return;
-        meeting.SpeakerNames[speaker] = name.Trim();
+        if (meeting == null) return;
+        // Empty goes back to the default label.
+        if (name.Trim().Length == 0) meeting.SpeakerNames.Remove(speaker);
+        else meeting.SpeakerNames[speaker] = name.Trim();
         SaveToFolder(meeting);
         Save();
     }

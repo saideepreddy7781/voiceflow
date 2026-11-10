@@ -57,6 +57,7 @@ internal sealed class FlowBarController : IDictationService, IDisposable
     public event Action? ConfirmRequested;
     public event Action? CancelRequested;
     public event Action? StopMeetingRequested;
+    public event Action? OpenMeetingsRequested;
 
     public void Set(FlowPhase phase)
     {
@@ -120,6 +121,7 @@ internal sealed class FlowBarController : IDictationService, IDisposable
     public void Confirm() => ConfirmRequested?.Invoke();
     public void Cancel() => CancelRequested?.Invoke();
     public void StopMeeting() => StopMeetingRequested?.Invoke();
+    public void OpenMeetings() => OpenMeetingsRequested?.Invoke();
 
     public void Dispose() => _toastTimer.Stop();
 }

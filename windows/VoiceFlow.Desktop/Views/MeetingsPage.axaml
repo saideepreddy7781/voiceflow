@@ -40,6 +40,7 @@
                   <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
                 <TextBlock Text="{Binding Meta}" Classes="caption subtle" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding Snippet}" Classes="caption subtle" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" IsVisible="{Binding HasSnippet}"/>
                 <TextBlock Text="Needs attention" Classes="caption" Foreground="{DynamicResource Signal}" IsVisible="{Binding NeedsAttention}"/>
               </StackPanel>
             </DataTemplate>

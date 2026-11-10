@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using VoiceFlow.Core.Audio;
+using System.Text.Json.Serialization;
 using VoiceFlow.Core.Speech;
 
 namespace VoiceFlow.Core.Meetings;
@@ -24,7 +24,10 @@ public static class MeetingText
     public static string DisplayName(this NotesLanguage l) => l == NotesLanguage.English ? "English" : "Same as the meeting";
 }
 
-public sealed record TranscriptLine(double Time, Speaker Speaker, string Text);
+/// <param name="Time">Seconds since the meeting started.</param>
+/// <param name="End">When the line ended, for lining up the two sides of the call. Missing in older meetings.</param>
+/// <param name="Language">Whisper's language for this line. Missing in older meetings.</param>
+public sealed record TranscriptLine(double Time, Speaker Speaker, string Text, double? End = null, string? Language = null);
 
 /// <summary>A stretch of the meeting where your microphone delivered no usable audio.</summary>
 public sealed record MicGap(double Time, double Seconds);
@@ -54,6 +57,16 @@ public sealed class MeetingNotes
     public List<string> Decisions { get; set; } = [];
     public List<ActionItem> ActionItems { get; set; } = [];
     public List<string> Questions { get; set; } = [];
+
+    /// <summary>Keeps the ticks on action items that are still there after the notes are rewritten.</summary>
+    public MeetingNotes CarryingOverDone(MeetingNotes? old)
+    {
+        if (old == null) return this;
+        var done = old.ActionItems.Where(a => a.Done).Select(a => a.Task.ToLowerInvariant()).ToHashSet();
+        foreach (var item in ActionItems)
+            if (done.Contains(item.Task.ToLowerInvariant())) item.Done = true;
+        return this;
+    }
 
     /// <summary>The JSON shape the model reads and writes (snake_case action_items).</summary>
     public JsonObject ToModelJson()
@@ -96,6 +109,10 @@ public sealed class Meeting
     public string? SyncedFileName { get; set; }
     /// <summary>Names the user gave the two speakers. A missing entry shows the default label.</summary>
     public Dictionary<Speaker, string> SpeakerNames { get; set; } = [];
+    /// <summary>A plain-language note about gaps, shown with the transcript (for example a daily limit running out).</summary>
+    public string? Note { get; set; }
+    /// <summary>Lines were rewritten into the chosen writing (Telugu or Hindi script choice).</summary>
+    public bool? ScriptRewritten { get; set; }
 
     public Meeting() { }
 
@@ -110,6 +127,25 @@ public sealed class Meeting
 
     public string LabelFor(Speaker speaker) =>
         SpeakerNames.TryGetValue(speaker, out var name) && name.Trim().Length > 0 ? name.Trim() : speaker.Label();
+
+    /// <summary>What "Others" is called in this meeting, after a rename. Null or blank shows "Others".</summary>
+    [JsonIgnore]
+    public string? OthersLabel
+    {
+        get => SpeakerNames.GetValueOrDefault(Speaker.Others);
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) SpeakerNames.Remove(Speaker.Others);
+            else SpeakerNames[Speaker.Others] = value;
+        }
+    }
+
+    /// <summary>The language spoken most in this meeting, by word count, from the per-line languages.</summary>
+    [JsonIgnore]
+    public string? DominantLanguage =>
+        Lines.Where(l => l.Language != null).GroupBy(l => l.Language!)
+            .Select(g => (Language: g.Key, Words: g.Sum(l => l.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length)))
+            .OrderByDescending(p => p.Words).Select(p => p.Language).FirstOrDefault();
 
     public string TranscriptText => string.Join("\n", Lines.Select(l => $"[{Clock(l.Time)}] {LabelFor(l.Speaker)}: {l.Text}"));
 
@@ -156,6 +192,7 @@ public static class MeetingMarkdown
             }
             if (n.Questions.Count > 0) sb.Append("\n## Open questions\n\n" + string.Join("\n", n.Questions.Select(s => $"- {s}")) + "\n");
         }
+        if (!string.IsNullOrEmpty(m.Note)) sb.Append($"\n_{m.Note}_\n");
         if (m.Lines.Count > 0)
             sb.Append("\n## Transcript\n\n" + string.Join("\n\n", m.Lines.Select(l => $"**{m.LabelFor(l.Speaker)}** [{Meeting.Clock(l.Time)}]: {l.Text}")) + "\n");
         return sb.ToString();
@@ -173,50 +210,52 @@ public static class MeetingMarkdown
     }
 }
 
-/// <summary>Decides who spoke during a stretch of audio by comparing your mic with the meeting audio.</summary>
-public static class SpeakerAttribution
+/// <summary>Finds meetings by title, notes or transcript.</summary>
+public static class MeetingSearch
 {
-    public static Speaker SpeakerFor(ReadOnlySpan<float> mic, ReadOnlySpan<float> system)
+    /// <summary>Whether the meeting mentions <paramref name="query"/> anywhere. An empty query matches everything.</summary>
+    public static bool Matches(Meeting meeting, string query)
     {
-        var micDb = AudioMath.Dbfs(AudioMath.Rms(mic));
-        var systemDb = AudioMath.Dbfs(AudioMath.Rms(system));
-        // Your voice reaches the meeting audio only faintly (echo cancellation), and the meeting audio reaches
-        // your mic only through speakers, so the louder source wins.
-        return micDb > systemDb ? Speaker.You : Speaker.Others;
+        var q = query.Trim();
+        if (q.Length == 0) return true;
+        var compare = CultureInfo.CurrentCulture.CompareInfo;
+        return SearchableParts(meeting).Any(p => compare.IndexOf(p, q, CompareOptions.IgnoreCase) >= 0);
     }
 
-    /// <summary>Mixes your mic and the meeting audio into one stream for transcription (one upload instead of two).</summary>
-    public static float[] Mix(IReadOnlyList<float> mic, IReadOnlyList<float> system)
+    /// <summary>A short piece of the first matching transcript line or note, for the results list. Null when only the title matches.</summary>
+    public static string? Snippet(Meeting meeting, string query, int radius = 40)
     {
-        var n = Math.Max(mic.Count, system.Count);
-        var output = new float[n];
-        for (int i = 0; i < n; i++)
+        var q = query.Trim();
+        if (q.Length == 0) return null;
+        var compare = CultureInfo.CurrentCulture.CompareInfo;
+        foreach (var part in SearchableParts(meeting).Skip(1))
         {
-            var v = (i < mic.Count ? mic[i] : 0) + (i < system.Count ? system[i] : 0);
-            output[i] = Math.Clamp(v, -1f, 1f);
+            var at = compare.IndexOf(part, q, CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace, out var length);
+            if (at < 0) continue;
+            // Cut on whole characters: a Telugu vowel sign is its own UTF-16 unit.
+            var starts = StringInfo.ParseCombiningCharacters(part);
+            var first = Array.FindLastIndex(starts, s => s <= at);
+            var last = Array.FindIndex(starts, s => s >= at + length);
+            if (last < 0) last = starts.Length;
+            var from = Math.Max(0, first - radius);
+            var to = Math.Min(starts.Length, last + radius);
+            var end = to >= starts.Length ? part.Length : starts[to];
+            return (from > 0 ? "…" : "") + part[starts[from]..end] + (end < part.Length ? "…" : "");
         }
-        return output;
+        return null;
     }
 
-    /// <summary>Turns Whisper's timed segments for one chunk into transcript lines with speakers.</summary>
-    public static List<TranscriptLine> Lines(DetailedTranscript transcript, double chunkStart, float[] mic, float[] system)
+    static List<string> SearchableParts(Meeting m)
     {
-        var rate = AudioMath.SampleRate;
-        if (transcript.Segments.Count == 0)
+        var parts = new List<string> { m.Title };
+        if (m.Notes is { } n)
         {
-            return transcript.Text.Length == 0 ? [] : [new TranscriptLine(chunkStart, SpeakerFor(mic, system), transcript.Text)];
+            parts.AddRange(n.Summary);
+            parts.AddRange(n.Decisions);
+            parts.AddRange(n.ActionItems.Select(a => a.Task));
+            parts.AddRange(n.Questions);
         }
-        var lines = new List<TranscriptLine>();
-        foreach (var seg in transcript.Segments)
-        {
-            if (seg.Text.Length == 0) continue;
-            var a = Math.Max(0, Math.Min(mic.Length, (int)(seg.Start * rate)));
-            var b = Math.Max(a, Math.Min(mic.Length, (int)(seg.End * rate)));
-            var sa = Math.Max(0, Math.Min(system.Length, a));
-            var sb = Math.Max(sa, Math.Min(system.Length, b));
-            var who = SpeakerFor(mic.AsSpan(a, b - a), system.AsSpan(sa, sb - sa));
-            lines.Add(new TranscriptLine(chunkStart + seg.Start, who, seg.Text));
-        }
-        return lines;
+        parts.AddRange(m.Lines.Select(l => l.Text));
+        return parts;
     }
 }

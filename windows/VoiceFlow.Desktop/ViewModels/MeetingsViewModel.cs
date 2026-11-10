@@ -3,6 +3,7 @@ using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using VoiceFlow.Core;
 using VoiceFlow.Core.Meetings;
 using VoiceFlow.Desktop.Services;
 
@@ -15,6 +16,9 @@ public sealed partial class MeetingListItem : ObservableObject
     public string Title { get; init; } = "";
     public string Meta { get; init; } = "";
     public bool NeedsAttention { get; init; }
+    /// <summary>Where the search matched, when it wasn't only the title.</summary>
+    public string? Snippet { get; init; }
+    public bool HasSnippet => Snippet != null;
 }
 
 public sealed partial class MeetingsViewModel : ObservableObject
@@ -73,14 +77,12 @@ public sealed partial class MeetingsViewModel : ObservableObject
         Items.Clear();
         if (recording)
             Items.Add(new MeetingListItem { Recording = true, Title = Service.Live!.Title, Meta = "Recording now" });
-        foreach (var m in Service.Meetings.Where(m => query.Length == 0
-                     || m.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-                     || m.TranscriptText.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+        foreach (var m in Service.Meetings.Where(m => MeetingSearch.Matches(m, query)))
         {
             var meta = m.Start.ToLocalTime().ToString("MMM d, h:mm tt", CultureInfo.CurrentCulture) +
                        $"  ·  {Math.Max(1, (int)Math.Round(m.Duration.TotalMinutes))} min";
             if (m.Status == MeetingStatus.WritingNotes) meta += "  ·  writing notes";
-            Items.Add(new MeetingListItem { Meeting = m, Title = m.Title, Meta = meta, NeedsAttention = m.Status == MeetingStatus.Failed });
+            Items.Add(new MeetingListItem { Meeting = m, Title = m.Title, Meta = meta, NeedsAttention = m.Status == MeetingStatus.Failed, Snippet = MeetingSearch.Snippet(m, query) });
         }
         NoMeetings = Items.Count == 0;
         OnPropertyChanged(nameof(IsIdle));
@@ -125,6 +127,14 @@ public sealed partial class LiveMeetingViewModel : ObservableObject, IDisposable
     [ObservableProperty] double _systemLevel;
     [ObservableProperty] string _healthText = "";
     [ObservableProperty] bool _healthProblem;
+    [ObservableProperty] string? _micLanguage;
+    [ObservableProperty] string? _callLanguage;
+
+    public bool HasMicLanguage => MicLanguage != null;
+    public bool HasCallLanguage => CallLanguage != null;
+
+    partial void OnMicLanguageChanged(string? value) => OnPropertyChanged(nameof(HasMicLanguage));
+    partial void OnCallLanguageChanged(string? value) => OnPropertyChanged(nameof(HasCallLanguage));
 
     void Refresh()
     {
@@ -148,6 +158,8 @@ public sealed partial class LiveMeetingViewModel : ObservableObject, IDisposable
     {
         MicLevel = _meetings.MicLevel;
         SystemLevel = _meetings.SystemLevel;
+        MicLanguage = _meetings.MicLanguage is { } mine ? Languages.DisplayName(mine) : null;
+        CallLanguage = _meetings.CallLanguage is { } theirs ? Languages.DisplayName(theirs) : null;
         (HealthText, HealthProblem) = _meetings.MicHealth switch
         {
             MicHealth.Silent => ("No sound from your microphone", true),
@@ -277,6 +289,9 @@ public sealed partial class MeetingDetailViewModel : ObservableObject
     public bool IsWriting => Meeting.Status == MeetingStatus.WritingNotes;
     public bool Failed => Meeting.Status == MeetingStatus.Failed;
     public string ErrorText => Meeting.Error ?? "Notes could not be written.";
+    public string? Note => Meeting.Note;
+    public bool HasNote => !string.IsNullOrEmpty(Meeting.Note);
+    public bool HasOthers => !Meeting.MicOnly;
 
     [ObservableProperty] string _title;
     [ObservableProperty] string _youName;

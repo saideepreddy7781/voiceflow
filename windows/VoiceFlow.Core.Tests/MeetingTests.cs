@@ -9,29 +9,17 @@ namespace VoiceFlow.Core.Tests;
 
 public class MeetingTests
 {
-    static float[] Tone(double seconds, float amp) => Enumerable.Range(0, (int)(seconds * 16_000)).Select(i => amp * MathF.Sin(i * 0.13f)).ToArray();
-
     [Fact]
-    public void LouderSourceIsTheSpeaker()
+    public void ChunkLinesUseTheMeetingClock()
     {
-        Assert.Equal(Speaker.You, SpeakerAttribution.SpeakerFor(Tone(1, 0.4f), Tone(1, 0.02f)));
-        Assert.Equal(Speaker.Others, SpeakerAttribution.SpeakerFor(Tone(1, 0.01f), Tone(1, 0.3f)));
+        var map = new TimeMap([new(0, 60, 2), new(2.25, 90, 2)]);
+        var t = new DetailedTranscript("a b", "en", [new(0, 1.9, "Hello there"), new(2.3, 3.9, "Hi")]);
+        var lines = ChunkLines.Lines(t, map, Speaker.Others, 60);
+        Assert.Equal([Speaker.Others, Speaker.Others], lines.Select(l => l.Speaker));
+        Assert.Equal(60, lines[0].Time, 3);
+        Assert.Equal(90.05, lines[1].Time, 3);
+        Assert.Equal("en", lines[0].Language);
     }
-
-    [Fact]
-    public void SegmentsGetSpeakersAndMeetingTime()
-    {
-        var mic = Tone(2, 0.4f).Concat(new float[32_000]).ToArray();
-        var system = new float[32_000].Concat(Tone(2, 0.4f)).ToArray();
-        var t = new DetailedTranscript("a b", "en", [new(0, 1.9, "Hello there"), new(2.1, 3.9, "Hi")]);
-        var lines = SpeakerAttribution.Lines(t, 60, mic, system);
-        Assert.Equal([Speaker.You, Speaker.Others], lines.Select(l => l.Speaker));
-        Assert.Equal([60, 62.1], lines.Select(l => l.Time));
-    }
-
-    [Fact]
-    public void MixingPadsAndClips() =>
-        Assert.Equal([1.0f, 1.0f, 0.1f], SpeakerAttribution.Mix([0.5f, 0.9f], [0.5f, 0.9f, 0.1f]));
 
     [Fact]
     public void MarkdownAndSafeFileName()
@@ -92,7 +80,8 @@ public class MeetingTests
             : """{"title":"Part","summary":["p"],"decisions":[],"action_items":[],"questions":[]}""");
         var meeting = new Meeting("Meeting")
         {
-            Lines = Enumerable.Repeat(new TranscriptLine(0, Speaker.Others, string.Concat(Enumerable.Repeat("word ", 500))), 13).ToList(),
+            // Different lines: identical ones would collapse as a Whisper loop.
+            Lines = Enumerable.Range(0, 13).Select(i => new TranscriptLine(i * 30, Speaker.Others, string.Concat(Enumerable.Repeat("word ", 500)) + i)).ToList(),
         };
         var notes = await new MeetingNotesWriter(chat, "m").WriteAsync(meeting, NotesLanguage.English);
         Assert.Equal("Merged", notes.Title);
@@ -119,7 +108,7 @@ sealed class ScriptedChat(Func<string, string> reply) : GroqChat("test")
     public int Calls => _calls;
 
     public override Task<string> CompleteAsync(string model, string system, string user, int maxTokens = 800, bool json = false,
-                                               double timeoutSeconds = 6, CancellationToken cancel = default)
+                                               double timeoutSeconds = 6, GroqPriority priority = GroqPriority.Interactive, CancellationToken cancel = default)
     {
         Interlocked.Increment(ref _calls);
         return Task.FromResult(reply(user));
@@ -146,7 +135,7 @@ public class MeetingRecorderTests
     internal static float[] Speech(double s) => Enumerable.Range(0, (int)(s * 16_000)).Select(i => 0.3f * MathF.Sin(i * 0.17f)).ToArray();
     internal static float[] Silence(double s) => new float[(int)(s * 16_000)];
     internal static float[] Cat(params float[][] parts) => parts.SelectMany(p => p).ToArray();
-    internal static readonly MeetingRecorder.Settings Settings = new("test", "m", "en", null, ["en"], null, null, true);
+    internal static readonly MeetingRecorder.Settings Settings = new("test", "m", ["en"], new WhisperPrompts(), null, true);
     static Task NoWait(TimeSpan _) => Task.CompletedTask;
 
     [Fact]
@@ -155,10 +144,11 @@ public class MeetingRecorderTests
         var mic = new FakeSource();
         var system = new FakeSource();
         int n = 0;
-        var recorder = new MeetingRecorder(_ => mic, () => system, (wav, s, ct) =>
+        var recorder = new MeetingRecorder(_ => mic, () => system, (wav, r, ct) =>
         {
-            var i = Interlocked.Increment(ref n);
-            return Task.FromResult(new DetailedTranscript($"chunk {i}", "en", [new(0, 2, $"chunk {i}")]));
+            Interlocked.Increment(ref n);
+            var text = r.Plan.Speaker == PlanSpeaker.User ? "chunk 1" : "chunk 2";
+            return Task.FromResult(new DetailedTranscript(text, "en", [new(0, 2, text)]));
         }, NoWait);
         recorder.Start("T", "Zoom", [], Settings);
         // 25 s: you talk for 22 s, then a pause; others silent. Then others talk 12 s.
@@ -235,7 +225,7 @@ public class MeetingRecorderTests
         mic.Push(Speech(5));
         var meeting = await recorder.StopAsync();
         Assert.Contains("could not be transcribed", meeting!.Lines[0].Text);
-        Assert.Equal([2, 4, 6], waits.Select(w => w.TotalSeconds));   // 4 tries, growing pauses
+        Assert.Equal([2, 2, 4], waits.Select(w => w.TotalSeconds));   // 2 tries live, 3 more at Stop
     }
 
     [Fact]
