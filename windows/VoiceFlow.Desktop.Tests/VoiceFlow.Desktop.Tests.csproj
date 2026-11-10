@@ -12,5 +12,5 @@
   <ItemGroup>
     <ProjectReference Include="..\VoiceFlow.Desktop\VoiceFlow.Desktop.csproj" />
   </ItemGroup>
-  <Import Project="..\VoiceFlow.Desktop\Build\NoAvaloniaGenerators.targets" />
+  <Import Project="..\VoiceFlow.Desktop\MSBuild\NoAvaloniaGenerators.targets" />
 </Project>

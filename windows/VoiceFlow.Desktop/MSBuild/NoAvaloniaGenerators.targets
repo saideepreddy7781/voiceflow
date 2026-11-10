@@ -1,0 +1,9 @@
+<Project>
+  <!-- Avalonia 12's Roslyn generators need compiler 4.14; the .NET 8 SDK ships 4.11. XAML is still compiled by
+       Avalonia's build task, so views call AvaloniaXamlLoader.Load and use FindControl in place of generated code. -->
+  <Target Name="RemoveAvaloniaGenerators" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'Avalonia.Generators' Or '%(Filename)' == 'Avalonia.Analyzers.CSharp' Or '%(Filename)' == 'Avalonia.Analyzers.CodeFixes.CSharp'" />
+    </ItemGroup>
+  </Target>
+</Project>
