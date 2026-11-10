@@ -30,3 +30,12 @@ windows/.vs/
 out/
 dist/
 selftest.txt
+
+# Signing keys: never commit (scripts/make-signing-cert.sh refuses to write inside a repository)
+*.key
+*.pem
+*.p12.base64
+*.p12.password
+*.keychain
+*.keychain-db
+voiceflow-signing.*
