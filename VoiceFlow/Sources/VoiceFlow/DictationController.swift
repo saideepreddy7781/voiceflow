@@ -28,7 +28,7 @@ final class DictationController {
     private var contextTask: Task<TypingContext, Never>?
     /// Set once the context is known to be a password field or excluded app: nothing is uploaded.
     private var blockedField = false
-    private var whisperPrompt: String?
+    private var whisperTerms: [String] = []
     private var processing: Task<Void, Never>?
     private var warnedLong = false
 
@@ -92,7 +92,7 @@ final class DictationController {
         cutter = SegmentCutter()
         segments = []
         blockedField = false
-        whisperPrompt = NameExtractor.whisperPrompt(dictionary: model.dictionaryTerms, names: [])
+        whisperTerms = model.dictionaryTerms
         Sounds.start(prefs.playSounds)
         if prefs.muteAudioWhileDictating && !model.notetaker.isRecording {
             // After the start cue has played, so the cue itself is not muted.
@@ -123,7 +123,7 @@ final class DictationController {
                 return
             }
             let names = NameExtractor.extract(from: [ctx.excerpt, ctx.windowTitle])
-            self.whisperPrompt = NameExtractor.whisperPrompt(dictionary: self.model.dictionaryTerms, names: names)
+            self.whisperTerms = self.model.dictionaryTerms + names
         }
 
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
@@ -263,7 +263,8 @@ final class DictationController {
                                              names: Array(names.prefix(40)), beforeCursor: terminal ? "" : context.beforeCursor,
                                              files: files, tagFiles: AppClassifier.tagsFiles(bundleID: context.bundleID),
                                              level: prefs.cleanupLevel,
-                                             telugu: prefs.speaksTelugu ? prefs.teluguScript : nil)
+                                             telugu: prefs.speaksTelugu ? prefs.teluguScript : nil,
+                                             hindi: prefs.speaksHindi ? prefs.hindiScript : nil)
                 let outcome = await TextCleaner(chat: GroqChat(apiKey: key), model: prefs.cleanupModel).clean(request)
                 cleaned = outcome.text
                 note = outcome.note
@@ -496,16 +497,14 @@ final class DictationController {
         guard !blockedField else { return }
         let prefs = model.preferences
         let audio = prefs.whisperMode ? AudioMath.normalized(samples) : samples
-        let language = prefs.whisperLanguage
-        let prompt = whisperPrompt
+        let prompts = WhisperPrompts(terms: whisperTerms, telugu: prefs.teluguScript, hindi: prefs.hindiScript)
         let model = self.model
         segments.append(Task.detached(priority: .userInitiated) {
             if AudioMath.isSilent(audio) { return "" }
             guard let key = await model.keyAsync() else { throw ProviderError.missingKey }
             let transcriber = GroqTranscriber(apiKey: key, model: prefs.transcriptionModel)
-            return try await transcriber.transcribeResolving(wav: AudioMath.wav(audio), language: language,
-                                                             parallelLanguage: prefs.parallelLanguage,
-                                                             languages: prefs.languages, prompt: prompt).text
+            return try await transcriber.transcribeResolving(wav: AudioMath.wav(audio), plan: prefs.languagePlan(),
+                                                             prompts: prompts, priority: .interactive).text
         })
     }
 

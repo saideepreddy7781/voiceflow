@@ -11,12 +11,15 @@ public struct CleanupRequest: Sendable {
     public var level: CleanupLevel
     /// Set when the dictation may be Telugu: how to write it.
     public var telugu: TeluguScript?
+    /// Set when the dictation may be Hindi: how to write it.
+    public var hindi: HindiScript?
 
     public init(transcript: String, style: WritingStyle, appName: String = "", names: [String] = [],
                 beforeCursor: String = "", files: [String] = [], tagFiles: Bool = false, level: CleanupLevel = .light,
-                telugu: TeluguScript? = nil) {
+                telugu: TeluguScript? = nil, hindi: HindiScript? = nil) {
         self.level = level
         self.telugu = telugu
+        self.hindi = hindi
         self.transcript = transcript
         self.style = style
         self.appName = appName
@@ -52,15 +55,17 @@ public struct TextCleaner: Sendable {
         }
         // Telugu always goes through the model: script conversion and recognition fixes need it.
         let hasTelugu = request.telugu != nil && raw.unicodeScalars.contains { (0x0C00...0x0C7F).contains($0.value) }
-        if !hasTelugu && Self.canSkipAI(raw) {
+        let hasHindi = request.hindi != nil && raw.unicodeScalars.contains { (0x0900...0x097F).contains($0.value) }
+        if !hasTelugu && !hasHindi && Self.canSkipAI(raw) {
             return CleanupOutcome(text: Self.tidy(raw, style: request.style, beforeCursor: request.beforeCursor), usedAI: false, note: nil)
         }
         let user = CleanupPrompt.userMessage(
             transcript: raw, style: request.style.promptName, app: request.appName, names: request.names,
             beforeCursor: request.beforeCursor, files: request.files, tagFiles: request.tagFiles,
-            cleanup: request.level.rawValue, telugu: hasTelugu ? request.telugu?.promptName : nil)
+            cleanup: request.level.rawValue, telugu: hasTelugu ? request.telugu?.promptName : nil,
+            hindi: hasHindi ? request.hindi?.promptName : nil)
         do {
-            let out = try await chat.complete(model: model, system: CleanupPrompt.system, user: user, maxTokens: 1_200)
+            let out = try await chat.complete(model: model, system: CleanupPrompt.system, user: user, maxTokens: 1_200, priority: .interactive)
             if let problem = Self.problem(with: out, raw: raw) {
                 return CleanupOutcome(text: Self.tidy(raw, style: request.style, beforeCursor: request.beforeCursor), usedAI: false, note: problem)
             }

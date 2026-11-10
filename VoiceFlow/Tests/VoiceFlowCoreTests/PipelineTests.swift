@@ -361,41 +361,44 @@ struct TeluguTests {
         DetailedTranscript(text: text, language: lang, segments: [], confidence: conf)
     }
 
-    @Test func parallelLanguageOnlyWithSeveralLanguages() {
+    @Test func secondOpinionsOnlyWithSeveralLanguages() {
         var prefs = Preferences()
         prefs.languages = ["en", "te"]
         #expect(prefs.whisperLanguage == nil)
-        #expect(prefs.parallelLanguage == "te")
+        #expect(prefs.languagePlan().forcedFirst == nil)
+        #expect(prefs.languagePlan().opinionCandidates == ["te"])
         prefs.languages = ["te"]
         #expect(prefs.whisperLanguage == "te")
-        #expect(prefs.parallelLanguage == nil)
+        #expect(prefs.languagePlan().forcedFirst == "te")
+        #expect(prefs.languagePlan(.anyone).forcedFirst == nil)
         #expect(Languages.code(forWhisperName: "Telugu") == "te")
     }
 
     /// Cases measured with Groq Whisper on 2026-10-17.
     @Test func resolverPicksTheRightTranscript() {
-        let langs = ["en", "te"]
+        let langs = LanguagePlan(languages: ["en", "te"])
+        func o(_ text: String, _ conf: Double) -> [LanguageOpinion] { [LanguageOpinion(language: "te", transcript: t(text, "te", conf))] }
         // English speech: keep English (forced Telugu is gibberish and far less confident).
         let en = LanguageResolver.choose(auto: t("Can you check the invoice?", "en", -0.14),
-                                         forced: t("క్ినిడాన్ిరాలు", "te", -0.70), forcedLanguage: "te", languages: langs)
+                                         opinions: o("క్ినిడాన్ిరాలు", -0.70), plan: langs)
         #expect(en.text.hasPrefix("Can you"))
         // Telugu heard as Hindi, more confident than Telugu: the script gives it away.
         let hi = LanguageResolver.choose(auto: t("नेनु रेपू ओफीस की वस्तानू", "hi", -0.079),
-                                         forced: t("నేను రేపు ఆఫీస్ కి వస్తాను", "te", -0.106), forcedLanguage: "te", languages: langs)
+                                         opinions: o("నేను రేపు ఆఫీస్ కి వస్తాను", -0.106), plan: langs)
         #expect(hi.language == "te")
         // Telugu heard as Tamil.
         let ta = LanguageResolver.choose(auto: t("நேனு ரேபோ மீட்டின்க்கி", "ta", -0.44),
-                                         forced: t("నేను రేపు మీటింగ్ కి", "te", -0.11), forcedLanguage: "te", languages: langs)
+                                         opinions: o("నేను రేపు మీటింగ్ కి", -0.11), plan: langs)
         #expect(ta.language == "te")
         // Telugu heard as garbled English: Telugu is clearly more confident.
         let garbled = LanguageResolver.choose(auto: t("Neme Rebu meeting Ghe Atena Bono", "en", -0.72),
-                                              forced: t("నేను రేపు మీటింగ్ కి అటెండ్ అవుతాను", "te", -0.20), forcedLanguage: "te", languages: langs)
+                                              opinions: o("నేను రేపు మీటింగ్ కి అటెండ్ అవుతాను", -0.20), plan: langs)
         #expect(garbled.language == "te")
         // Close call stays with auto-detect.
-        let close = LanguageResolver.choose(auto: t("Okay", "en", -0.30), forced: t("ఓకే", "te", -0.25), forcedLanguage: "te", languages: langs)
+        let close = LanguageResolver.choose(auto: t("Okay", "en", -0.30), opinions: o("ఓకే", -0.25), plan: langs)
         #expect(close.language == "en")
         // No forced result (request failed): auto.
-        #expect(LanguageResolver.choose(auto: t("Hi", "en", -0.1), forced: nil, forcedLanguage: "te", languages: langs).text == "Hi")
+        #expect(LanguageResolver.choose(auto: t("Hi", "en", -0.1), opinions: [], plan: langs).text == "Hi")
     }
 
     @Test func scriptDetection() {
@@ -410,7 +413,7 @@ struct TeluguTests {
         let d = try GroqTranscriber.parseVerbose(Data(json.utf8))
         #expect(d.text == "నమస్తే")
         #expect(d.language == "te")
-        #expect(d.segments.first == .init(start: 0, end: 1.5, text: "నమస్తే"))
+        #expect(d.segments.first == .init(start: 0, end: 1.5, text: "నమస్తే", avgLogprob: -0.2))
         #expect(abs((d.confidence ?? 0) - (-0.3)) < 0.0001)     // (−0.2×1.5 + −0.6×0.5) / 2
     }
 
@@ -427,9 +430,7 @@ struct TeluguTests {
         let transcriber = GroqTranscriber(apiKey: LivePipelineTests.key!)
         for (clip, expectTelugu) in [("telugu-english", true), ("question", false), ("email", false), ("indian-english", false)] {
             let wav = try Data(contentsOf: LivePipelineTests.fixtures.appending(path: "\(clip).wav"))
-            let result = try await transcriber.transcribeResolving(wav: wav, language: prefs.whisperLanguage,
-                                                                   parallelLanguage: prefs.parallelLanguage,
-                                                                   languages: prefs.languages, prompt: nil)
+            let result = try await transcriber.transcribeResolving(wav: wav, plan: prefs.languagePlan(), prompts: WhisperPrompts())
             print("\(clip): [\(result.language ?? "?")] \(result.text)")
             #expect((Script.dominant(in: result.text) == .telugu) == expectTelugu)
         }

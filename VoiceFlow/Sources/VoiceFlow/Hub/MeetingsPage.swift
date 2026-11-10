@@ -10,7 +10,7 @@ struct MeetingsPage: View {
 
     private var meetings: [Meeting] {
         notetaker.meetings.filter { !(notetaker.isRecording && $0.id == notetaker.live?.id) }.filter {
-            query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.transcriptText.localizedCaseInsensitiveContains(query)
+            MeetingSearch.matches($0, query: query)
         }
     }
 
@@ -23,10 +23,11 @@ struct MeetingsPage: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
                         if notetaker.isRecording, let live = notetaker.live {
-                            MeetingListRow(meeting: live, selected: selected == nil, recording: true) { selected = nil }
+                            MeetingListRow(meeting: live, snippet: nil, selected: selected == nil, recording: true) { selected = nil }
                         }
                         ForEach(meetings) { meeting in
-                            MeetingListRow(meeting: meeting, selected: selected == meeting.id, recording: false) { selected = meeting.id }
+                            MeetingListRow(meeting: meeting, snippet: MeetingSearch.snippet(meeting, query: query),
+                                           selected: selected == meeting.id, recording: false) { selected = meeting.id }
                         }
                     }
                 }
@@ -100,6 +101,7 @@ struct MeetingsPage: View {
 
 private struct MeetingListRow: View {
     let meeting: Meeting
+    let snippet: String?
     let selected: Bool
     let recording: Bool
     let onSelect: () -> Void
@@ -117,6 +119,7 @@ private struct MeetingListRow: View {
                 if meeting.status == .failed { Text("· needs attention").foregroundStyle(.orange) }
             }
             .font(.caption).foregroundStyle(.secondary)
+            if let snippet { Text(snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -149,14 +152,14 @@ private struct LiveMeetingView: View {
             }
             micBanner
             HStack(spacing: 24) {
-                InputLevel(label: "You (microphone)", level: notetaker.micLevel, tick: notetaker.levelTick)
+                InputLevel(label: "You (microphone)", language: notetaker.micLanguage, level: notetaker.micLevel, tick: notetaker.levelTick)
                 if !meeting.micOnly {
-                    InputLevel(label: "Others (meeting audio)", level: notetaker.systemLevel, tick: notetaker.levelTick)
+                    InputLevel(label: "Others (meeting audio)", language: notetaker.callLanguage, level: notetaker.systemLevel, tick: notetaker.levelTick)
                 }
             }
-            Text("The transcript fills in every 20–45 seconds, at pauses. If a bar never moves, that side isn't being recorded.")
+            Text("Each side fills in after about 20 seconds of talking, at a pause. If a bar never moves, that side isn't being recorded.")
                 .font(.callout).foregroundStyle(.secondary)
-            TranscriptList(lines: meeting.lines)
+            TranscriptList(meeting: meeting)
         }
         .padding(24)
     }
@@ -183,6 +186,7 @@ private struct MeetingDetail: View {
     let onDelete: () -> Void
     @State private var title = ""
     @State private var tab = 0
+    @State private var othersName = ""
 
     var body: some View {
         ScrollView {
@@ -210,7 +214,7 @@ private struct MeetingDetail: View {
                     }
                     .pickerStyle(.segmented).labelsHidden().frame(width: 220)
                     Spacer()
-                    Button("Copy") { TextInserter.copyToClipboard(MeetingMarkdown.render(meeting)) }
+                    Button("Copy as Markdown") { TextInserter.copyToClipboard(MeetingMarkdown.render(meeting)) }
                     Button("Save as Markdown…") { notetaker.saveMarkdownAs(meeting) }
                     Menu {
                         Button("Rewrite notes") { Task { await notetaker.writeNotes(for: meeting.id) } }
@@ -232,16 +236,31 @@ private struct MeetingDetail: View {
                     EmptyView()
                 }
 
+                if let note = meeting.note, !note.isEmpty {
+                    Label(note, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                }
+
                 if tab == 0 {
                     if let notes = meeting.notes { NotesView(meeting: meeting, notes: notes, notetaker: notetaker) }
                 } else {
-                    TranscriptList(lines: meeting.lines)
+                    if !meeting.micOnly {
+                        HStack(spacing: 8) {
+                            Text("Call the other side").font(.callout).foregroundStyle(.secondary)
+                            TextField("Others", text: $othersName)
+                                .textFieldStyle(.roundedBorder).frame(width: 180)
+                                .onSubmit { notetaker.renameOthers(meeting.id, to: othersName) }
+                        }
+                    }
+                    TranscriptList(meeting: meeting)
                 }
             }
             .padding(24)
             .frame(maxWidth: 820, alignment: .leading)
         }
-        .onAppear { title = meeting.title }
+        .onAppear {
+            title = meeting.title
+            othersName = meeting.othersLabel ?? ""
+        }
     }
 }
 
@@ -290,7 +309,8 @@ private struct NotesView: View {
 }
 
 private struct TranscriptList: View {
-    let lines: [TranscriptLine]
+    let meeting: Meeting
+    private var lines: [TranscriptLine] { meeting.lines }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -300,11 +320,11 @@ private struct TranscriptList: View {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 HStack(alignment: .top, spacing: 10) {
                     Text(Meeting.clock(line.time)).font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
-                    Text(line.speaker.label)
-                        .font(.caption.weight(.semibold))
+                    Text(meeting.label(for: line.speaker))
+                        .font(.caption.weight(.semibold)).lineLimit(1)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(line.speaker == .you ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.08)))
-                        .frame(width: 60, alignment: .leading)
+                        .frame(width: 84, alignment: .leading)
                     Text(line.text).textSelection(.enabled)
                 }
             }
@@ -314,12 +334,24 @@ private struct TranscriptList: View {
 
 private struct InputLevel: View {
     let label: String
+    let language: String?
     let level: Float
     let tick: Int
 
+    private var languageName: String? {
+        language.map { code in Languages.options.first { $0.code == code }?.name ?? code }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(label).font(.caption).foregroundStyle(.secondary)
+                if let languageName {
+                    Text(languageName).font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
+            }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.08))

@@ -178,6 +178,9 @@ struct OnboardingView: View {
                 if model.preferences.speaksTelugu {
                     TeluguWritingPicker(selection: $model.preferences.teluguScript)
                 }
+                if model.preferences.speaksHindi {
+                    HindiWritingPicker(selection: $model.preferences.hindiScript)
+                }
                 Divider().padding(.vertical, 4)
                 Picker("Keep my transcripts", selection: $model.preferences.historyRetentionDays) {
                     Text("30 days").tag(30)
