@@ -30,7 +30,11 @@ public sealed partial class OnboardingViewModel : ObservableObject
         {
             if (e.PropertyName is nameof(KeyField.IsStored) or nameof(KeyField.ResultOk)) OnPropertyChanged(nameof(CanContinue));
         };
-        services.Dictation.Changed += (_, _) => OnPropertyChanged(nameof(HotkeyDetected));
+        services.Dictation.Changed += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HotkeyDetected));
+            OnPropertyChanged(nameof(HotkeyPrompt));
+        };
         UpdatePills();
     }
 
