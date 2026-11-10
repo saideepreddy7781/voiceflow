@@ -3,7 +3,7 @@
              xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
              x:Class="VoiceFlow.Desktop.Views.DictionaryEditDialog"
              x:DataType="vm:DictionaryEditViewModel">
-  <Border Classes="card" Width="440" Padding="24" BoxShadow="0 8 24 0 #33000000">
+  <Border Classes="card" Width="440" Padding="24">
     <StackPanel Spacing="16">
       <TextBlock Text="{Binding Heading}" Classes="h2"/>
       <StackPanel Spacing="4">

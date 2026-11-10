@@ -3,7 +3,7 @@
              xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
              x:Class="VoiceFlow.Desktop.Views.ConfirmDialog"
              x:DataType="vm:ConfirmDialogViewModel">
-  <Border Classes="card" Width="440" Padding="24" BoxShadow="0 8 24 0 #33000000">
+  <Border Classes="card" Width="440" Padding="24">
     <StackPanel Spacing="16">
       <TextBlock Text="{Binding Title}" Classes="h2 wrap"/>
       <TextBlock Text="{Binding Message}" Classes="callout muted wrap"/>
