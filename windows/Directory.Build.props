@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>VoiceFlow</Product>
     <Company>Saideep Reddy</Company>
     <Authors>Saideep Reddy</Authors>
