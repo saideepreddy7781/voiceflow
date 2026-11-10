@@ -146,6 +146,9 @@ public struct MeetingNotesWriter: Sendable {
         }
     }
 
+    /// Longer rate limits than this are reported at once, and Try again works when the limit has passed.
+    static let maxRateLimitWait = 120.0
+
     private func ask(_ user: String, model: String) async throws -> MeetingNotes {
         var attempt = 0
         while true {
@@ -153,7 +156,7 @@ public struct MeetingNotesWriter: Sendable {
                 let json = try await chat.complete(model: model, system: Self.system, user: user, maxTokens: 1_500, json: true, timeout: 60, priority: .background)
                 guard let notes = Self.parse(json) else { throw ProviderError.badResponse }
                 return notes
-            } catch ProviderError.rateLimited(let retryAfter) where attempt < 8 {
+            } catch ProviderError.rateLimited(let retryAfter) where attempt < 8 && (retryAfter ?? 0) <= Self.maxRateLimitWait {
                 // Long meetings hit the per-minute token limit; wait it out.
                 attempt += 1
                 try await Task.sleep(for: .seconds((retryAfter ?? 8) + 1))

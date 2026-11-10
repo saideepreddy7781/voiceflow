@@ -278,7 +278,7 @@ final class Notetaker {
         guard let i = meetings.firstIndex(where: { $0.id == id }) else { return }
         meetings[i].lines = result.lines
         meetings[i].scriptRewritten = result.note == nil
-        if let note = result.note {
+        if let note = result.note, meetings[i].note?.contains(note) != true {
             meetings[i].note = [meetings[i].note, note].compactMap { $0 }.joined(separator: " ")
         }
     }

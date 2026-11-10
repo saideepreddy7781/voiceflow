@@ -138,10 +138,16 @@ final class MicTester {
     private(set) var level: Float = 0
     private(set) var running = false
     private(set) var error: String?
+    private var closeObserver: NSObjectProtocol?
 
     func start(deviceUID: String) {
         guard !AppRuntime.isDemo else { return }
         stop()
+        // SwiftUI's onDisappear doesn't run when an NSWindow closes, and that would leave the microphone on.
+        closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: NSApp.keyWindow,
+                                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stop() }
+        }
         do {
             try recorder.start(deviceUID: deviceUID.isEmpty ? nil : deviceUID)
             running = true
@@ -160,6 +166,8 @@ final class MicTester {
     func stop() {
         timer?.invalidate()
         timer = nil
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        closeObserver = nil
         if recorder.isRecording { recorder.stop() }
         running = false
         level = 0

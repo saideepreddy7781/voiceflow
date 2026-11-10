@@ -86,6 +86,8 @@ struct UpdateCheckerTests {
         #expect(UpdateChecker.safeURL("https://github.com/saideepreddy7781/voiceflow.evil/x") == UpdateChecker.releasesPage)
         #expect(UpdateChecker.safeURL("http://github.com/saideepreddy7781/voiceflow/releases") == UpdateChecker.releasesPage)
         #expect(UpdateChecker.safeURL(nil) == UpdateChecker.releasesPage)
+        #expect(UpdateChecker.safeURL("https://github.com/saideepreddy7781/voiceflow/../../someone-else/x") == UpdateChecker.releasesPage)
+        #expect(UpdateChecker.safeURL("https://github.com/saideepreddy7781/voiceflow/%2e%2e/%2e%2e/someone-else/x") == UpdateChecker.releasesPage)
     }
 }
 

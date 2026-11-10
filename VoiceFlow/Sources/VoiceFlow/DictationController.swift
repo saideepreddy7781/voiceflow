@@ -122,7 +122,8 @@ final class DictationController {
                 }
                 return
             }
-            let names = NameExtractor.extract(from: [ctx.excerpt, ctx.windowTitle])
+            // Terminal contents can be anyone's output, so none of it goes into the Whisper prompt either.
+            let names = OutputSafety.isTerminal(bundleID: ctx.bundleID) ? [] : NameExtractor.extract(from: [ctx.excerpt, ctx.windowTitle])
             self.whisperTerms = self.model.dictionaryTerms + names
         }
 
@@ -322,7 +323,8 @@ final class DictationController {
         }
         var ctx = context
         if OutputSafety.isTerminal(bundleID: ctx.bundleID) { ctx.fullText = "" }   // scrollback is untrusted
-        if ctx.selectedText.isEmpty && !ctx.isSecure { ctx.selectedText = await Self.copySelection() ?? "" }
+        // Focus may have moved to a password manager while this was being transcribed.
+        if ctx.selectedText.isEmpty && !ctx.isSecure && !TextInserter.focusIsProtected() { ctx.selectedText = await Self.copySelection() ?? "" }
         let runner = CommandRunner(chat: GroqChat(apiKey: key), model: model.preferences.commandModel)
         do {
             let result = try await runner.run(app: ctx.appName, fullText: ctx.fullText, selectedText: ctx.selectedText, instruction: instruction)
@@ -468,6 +470,8 @@ final class DictationController {
         let samples = recorder.stop()
         muter.restore()
         Sounds.stop(model.preferences.playSounds)
+        // The microphone is off, so the bar can't keep saying it's listening. `finish()` raises it again for processing.
+        model.pill.set(.idle)
         return samples
     }
 

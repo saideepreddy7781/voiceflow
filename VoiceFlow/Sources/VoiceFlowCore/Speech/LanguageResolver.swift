@@ -159,8 +159,10 @@ public enum LanguageResolver {
             }
             return .unlisted(real: real)
         }
+        // English full of technical terms also fails the reading check, but it isn't spelled by sound.
         if let language = auto.language, LanguageEvidence.reads(as: language, text: auto.text) == false,
-           plan.opinionCandidates.contains(where: { $0 != language }) {
+           plan.opinionCandidates.contains(where: { $0 != language }),
+           language != "en" || LanguageEvidence.looksSoundSpelled(auto.text) {
             return .disguised
         }
         return confidence < lowConfidence ? .lowConfidence : nil

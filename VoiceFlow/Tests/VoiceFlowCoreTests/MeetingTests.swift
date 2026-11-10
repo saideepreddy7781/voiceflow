@@ -215,6 +215,11 @@ struct MeetingRecorderTests {
     }
 }
 
+actor HintLog {
+    private(set) var hints: [String?] = []
+    func add(_ hint: String?) { hints.append(hint) }
+}
+
 actor Counter {
     private var n = 0
     func next() -> Int { n += 1; return n }
@@ -240,6 +245,61 @@ struct MeetingRecorderRobustnessTests {
         #expect(seconds.allSatisfy { $0 <= 45.01 })
         #expect(abs(seconds.reduce(0, +) - 170) < 0.1)  // nothing lost
         #expect(meeting?.lines.count == seconds.count)
+    }
+
+    @Test func stickyLanguageLetsGoWhenTheStreamMovesToEnglish() async throws {
+        let mic = FakeSource()
+        let log = HintLog()
+        let count = Counter()
+        let settings = MeetingRecorder.Settings(apiKey: "test", model: "m", languages: ["en", "te"], prompts: WhisperPrompts(),
+                                                micDeviceUID: nil, recordSystemAudio: false)
+        let recorder = MeetingRecorder(mic: { _ in mic }, system: { nil }) { _, request in
+            await log.add(request.hint)
+            let n = await count.next()
+            // The third chunk is English: the sticky Telugu request loses to auto-detect.
+            return DetailedTranscript(text: "chunk \(n)", language: n == 3 ? "en" : "te", segments: [])
+        }
+        try recorder.start(title: "T", app: "", attendees: [], settings: settings, autoTick: false)
+        for _ in 0..<4 {
+            mic.queue = T.speech(22) + T.silence(3)
+            recorder.tick()
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        _ = await recorder.stop()
+        #expect(await log.hints == [nil, nil, "te", nil])
+    }
+
+    @Test func stopHonoursTheRetryDeadlineDuringARateLimit() async throws {
+        let mic = FakeSource()
+        let count = Counter()
+        let recorder = MeetingRecorder(mic: { _ in mic }, system: { nil }) { _, _ in
+            // Two live tries fail fast; the retry at Stop then hits a long rate limit.
+            if await count.next() <= 2 { throw ProviderError.network("offline") }
+            throw ProviderError.rateLimited(retryAfter: 100)
+        }
+        recorder.finalRetryLimit = 0.2
+        try recorder.start(title: "T", app: "", attendees: [], settings: T.settings, autoTick: false)
+        mic.queue = T.speech(5)
+        let started = Date()
+        let meeting = await recorder.stop()
+        #expect(Date().timeIntervalSince(started) < 10)
+        #expect(meeting?.lines.first?.text == TranscriptFilter.lostMarker)
+    }
+
+    @Test func notesDoNotSleepThroughALongRateLimit() async throws {
+        let gate = GroqGate()
+        _ = try? await gate.perform(.chat(model: "m", estimatedTokens: 1), priority: .background) { throw ProviderError.rateLimited(retryAfter: 5_000) }
+        let chat = GroqChat(apiKey: "k", gate: gate)
+        var meeting = Meeting(title: "T")
+        meeting.lines = [TranscriptLine(time: 0, speaker: .you, text: "hello there")]
+        let started = Date()
+        await #expect(throws: ProviderError.self) {
+            _ = try await MeetingNotesWriter(chat: chat, model: "m", fallbackModel: nil).write(meeting: meeting, language: .english)
+        }
+        let result = await TranscriptScriptWriter(chat: chat, model: "m")
+            .rewrite([TranscriptLine(time: 0, speaker: .you, text: "నేను office")], telugu: .telugu, hindi: nil)
+        #expect(result.note != nil)
+        #expect(Date().timeIntervalSince(started) < 10)
     }
 
     @Test func stalledMicIsPaddedSoMeetingAudioKeepsFlowing() async throws {

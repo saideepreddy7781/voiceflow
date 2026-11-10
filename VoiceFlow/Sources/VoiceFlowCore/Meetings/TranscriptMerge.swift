@@ -19,11 +19,11 @@ public enum ChunkLines {
                 for words in groups where !words.isEmpty {
                     out.append(TranscriptLine(time: map.meetingTime(chunkSeconds: words[0].start), speaker: speaker,
                                               text: words.map(\.word).joined(separator: " "),
-                                              end: map.meetingTime(chunkSeconds: words[words.count - 1].end), language: language))
+                                              end: map.meetingEndTime(chunkSeconds: words[words.count - 1].end), language: language))
                 }
             } else {
                 out.append(TranscriptLine(time: map.meetingTime(chunkSeconds: segment.start), speaker: speaker, text: segment.text,
-                                          end: map.meetingTime(chunkSeconds: segment.end), language: language))
+                                          end: map.meetingEndTime(chunkSeconds: segment.end), language: language))
             }
         }
         return out
@@ -72,7 +72,7 @@ public enum TranscriptMerge {
             guard words.count >= minimumEchoWords else { return true }
             let long = words.count >= longLineWords
             let window = long ? echoWindow : shortEchoWindow
-            let pool = others.filter { abs($0.time - line.time) <= window || overlaps($0, line) }
+            let pool = others.filter { heardTogether($0, line, window: window) }
                 .reduce(into: Set<String>()) { $0.formUnion(tokens($1.text)) }
             guard !pool.isEmpty else { return true }
             let share = Double(words.filter(pool.contains).count) / Double(words.count)
@@ -80,9 +80,13 @@ public enum TranscriptMerge {
         }
     }
 
-    private static func overlaps(_ a: TranscriptLine, _ b: TranscriptLine) -> Bool {
-        guard let ae = a.end, let be = b.end else { return false }
-        return a.time < be && b.time < ae
+    /// An echo is heard while the call's line plays, so most of the shorter line overlaps the other. A reply starts
+    /// after the line it answers has ended, however many of its words it repeats. Lines with no end time (older
+    /// meetings) can only compare start times.
+    private static func heardTogether(_ call: TranscriptLine, _ mic: TranscriptLine, window: Double) -> Bool {
+        guard let callEnd = call.end, let micEnd = mic.end else { return abs(call.time - mic.time) <= window }
+        let overlap = min(callEnd, micEnd) - max(call.time, mic.time)
+        return overlap > 0 && overlap >= min(callEnd - call.time, micEnd - mic.time) * 0.5
     }
 
     static func tokens(_ text: String) -> [String] {
