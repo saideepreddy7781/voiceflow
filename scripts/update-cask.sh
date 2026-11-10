@@ -17,5 +17,8 @@ sed -i.bak -E \
   "$CASK"
 rm -f "$CASK.bak"
 
-grep -q "version \"$VERSION\"" "$CASK" && grep -q "sha256 \"$SHA256\"" "$CASK" || { echo "Cask was not updated" >&2; exit 1; }
+if ! grep -q "version \"$VERSION\"" "$CASK" || ! grep -q "sha256 \"$SHA256\"" "$CASK"; then
+  echo "Cask was not updated" >&2
+  exit 1
+fi
 echo "Casks/voiceflow.rb: $VERSION $SHA256"
