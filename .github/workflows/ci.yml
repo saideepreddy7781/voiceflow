@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
   pull_request:
 
 permissions:
@@ -52,7 +52,9 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Unit tests
-        run: dotnet test windows/VoiceFlow.Core.Tests -c Release
+        run: |
+          dotnet test windows/VoiceFlow.Core.Tests -c Release
+          dotnet test windows/VoiceFlow.Desktop.Tests -c Release
 
       - name: Publish (x64)
         run: >
