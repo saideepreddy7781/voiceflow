@@ -44,6 +44,18 @@ struct PreferencesTests {
         #expect(store.load() == prefs)
     }
 
+    /// Preferences saved before update checks existed still decode, with checks on and nothing dismissed.
+    @Test func olderStoredPreferencesGetUpdateDefaults() throws {
+        let old = #"{"hotkey":"rightOption","languages":["te","en"],"historyRetentionDays":-1,"onboarded":true,"showBarWhenIdle":false}"#
+        let prefs = try JSONDecoder().decode(Preferences.self, from: Data(old.utf8))
+        #expect(prefs.hotkey == .rightOption)
+        #expect(prefs.languages == ["te", "en"])
+        #expect(prefs.historyRetentionDays == -1)
+        #expect(prefs.onboarded)
+        #expect(prefs.checkForUpdates)
+        #expect(prefs.dismissedUpdateVersion == "")
+    }
+
     @Test func missingStoreGivesDefaults() {
         #expect(PreferenceStore(defaults: freshDefaults()).load() == Preferences())
     }

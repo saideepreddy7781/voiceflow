@@ -14,19 +14,31 @@ public enum AppPaths {
 /// Small JSON-file store. Writes are atomic.
 public struct JSONFile<Value: Codable>: Sendable {
     public let url: URL
+    private let touchesDisk: Bool
 
     public init(_ name: String, folder: URL = AppPaths.supportFolder) {
         url = folder.appending(path: name)
+        touchesDisk = true
     }
 
+    private init(discarding name: String) {
+        url = URL(fileURLWithPath: "/dev/null").appending(path: name)
+        touchesDisk = false
+    }
+
+    /// A store that loads nothing and saves nothing. Screenshot mode uses it so demo data can never reach
+    /// the user's files; it does not even look up the support folder.
+    public static func discarding(_ name: String) -> JSONFile { JSONFile(discarding: name) }
+
     public func load() -> Value? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard touchesDisk, let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(Value.self, from: data)
     }
 
     public func save(_ value: Value) {
+        guard touchesDisk else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -253,6 +265,33 @@ public struct UsageStats: Equatable, Sendable {
             day = calendar.date(byAdding: .day, value: -1, to: day)!
         }
         return s
+    }
+}
+
+/// What Home's stat cards show for one day.
+public struct DayUsage: Equatable, Sendable {
+    public var words = 0
+    public var dictations = 0
+    public var secondsSpoken = 0.0
+
+    /// Typing averages about 40 words a minute (the figure the Insights page uses).
+    public static let typingWordsPerMinute = 40.0
+
+    public var minutesSaved: Double { max(0, Double(words) / Self.typingWordsPerMinute - secondsSpoken / 60) }
+
+    public var timeSavedLabel: String {
+        if words == 0 { return "0 min" }
+        return minutesSaved < 1 ? "<1 min" : "\(Int(minutesSaved.rounded())) min"
+    }
+
+    public static func compute(_ entries: [HistoryEntry], on day: Date = Date(), calendar: Calendar = .current) -> DayUsage {
+        var usage = DayUsage()
+        for e in entries where e.outcome != "failed" && calendar.isDate(e.date, inSameDayAs: day) {
+            usage.words += e.wordCount
+            usage.dictations += 1
+            usage.secondsSpoken += e.audioSeconds
+        }
+        return usage
     }
 }
 

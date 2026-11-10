@@ -136,7 +136,8 @@ final class FlowBarController {
         case .idle where state.meetingSince != nil: NSSize(width: 230, height: 40)
         case .idle: state.showWhenIdle ? NSSize(width: 230, height: 40) : NSSize(width: 1, height: 1)
         case .listening, .processing: NSSize(width: 120, height: 40)
-        case .handsFree, .command: NSSize(width: 150, height: 40)
+        case .handsFree: NSSize(width: 150, height: 40)
+        case .command: NSSize(width: 170, height: 40)
         case .message: NSSize(width: 440, height: 96)
         }
     }
@@ -169,11 +170,12 @@ final class FlowBarController {
 
 // MARK: Views
 
+/// The bar is always dark, on any wallpaper in either appearance, so it uses the dark values of the palette.
 private enum BarStyle {
-    static let fill = Color(white: 0.09)
+    static let fill = Color(red: 0.067, green: 0.067, blue: 0.067)
     static let border = Color.white.opacity(0.16)
     static let bars = Color(white: 0.97)
-    static let command = Color(red: 0.62, green: 0.55, blue: 1.0)
+    static let signal = Color(red: 0.949, green: 0.380, blue: 0.247)
 }
 
 struct FlowBarView: View {
@@ -199,13 +201,19 @@ struct FlowBarView: View {
             else if state.showWhenIdle { resting }
         case .listening:
             pill { Bars(levels: state.levels, color: BarStyle.bars, frozen: false) }
+                .accessibilityLabel("Listening")
         case .processing:
             pill { Bars(levels: state.levels, color: BarStyle.bars, frozen: true) }
+                .accessibilityLabel("Processing")
         case .handsFree, .command:
             pill {
                 HStack(spacing: 7) {
                     RoundButton(symbol: "xmark", filled: false, help: "Cancel (Esc)") { state.onCancel?() }
-                    Bars(levels: state.levels, color: state.phase == .command ? BarStyle.command : BarStyle.bars, frozen: false)
+                    if state.phase == .command {
+                        Image(systemName: "sparkles").font(.system(size: 11)).foregroundStyle(BarStyle.bars)
+                            .accessibilityLabel("Command Mode")
+                    }
+                    Bars(levels: state.levels, color: BarStyle.bars, frozen: false)
                     RoundButton(symbol: "checkmark", filled: true, help: "Finish") { state.onConfirm?() }
                 }
             }
@@ -216,8 +224,8 @@ struct FlowBarView: View {
         content()
             .padding(.horizontal, 6)
             .frame(height: 30)
-            .background(Capsule().fill(BarStyle.fill))
-            .overlay(Capsule().strokeBorder(state.phase == .command ? BarStyle.command.opacity(0.6) : BarStyle.border, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 15, style: .circular).fill(BarStyle.fill))
+            .overlay(RoundedRectangle(cornerRadius: 15, style: .circular).strokeBorder(BarStyle.border, lineWidth: 1))
             .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
     }
 
@@ -257,7 +265,17 @@ struct FlowBarView: View {
             }
     }
 
+    /// Hugs short messages; long ones wrap at 420.
     private var toast: some View {
+        ViewThatFits(in: .horizontal) {
+            toastContent.fixedSize()
+            toastContent.frame(width: 420)
+        }
+        .frame(maxWidth: 420)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private var toastContent: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(state.message).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(2)
@@ -266,15 +284,22 @@ struct FlowBarView: View {
                 }
             }
             if let action = state.action {
-                Button(action.title) { action.run() }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
+                Button { action.run() } label: {
+                    Text(action.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.black)
+                        .padding(.horizontal, 12).frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).fill(BarStyle.bars))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(action.title)
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
-        .frame(maxWidth: 420)
-        .background(RoundedRectangle(cornerRadius: 12).fill(BarStyle.fill))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(BarStyle.border, lineWidth: 1))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .background(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).fill(BarStyle.fill))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(BarStyle.border, lineWidth: 1))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -294,6 +319,7 @@ private struct RoundButton: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -322,7 +348,7 @@ private struct MeetingChip: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(Color.red).frame(width: 8, height: 8)
+            Circle().fill(BarStyle.signal).frame(width: 8, height: 8).accessibilityHidden(true)
             TimelineView(.periodic(from: since, by: 1)) { context in
                 Text(Meeting.clock(context.date.timeIntervalSince(since)))
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
@@ -335,10 +361,13 @@ private struct MeetingChip: View {
             }
             .buttonStyle(.plain)
             .help("Stop and write notes")
+            .accessibilityLabel("Stop and write notes")
         }
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .background(Capsule().fill(Color(white: 0.09)))
-        .overlay(Capsule().strokeBorder(Color.red.opacity(0.5), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 14, style: .circular).fill(BarStyle.fill))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .circular).strokeBorder(BarStyle.signal.opacity(0.5), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Recording meeting notes")
     }
 }

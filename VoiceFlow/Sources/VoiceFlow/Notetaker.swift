@@ -13,9 +13,10 @@ final class Notetaker {
 
     private unowned let model: AppModel
     private let log = Logger(subsystem: "com.saideep.voiceflow", category: "notetaker")
-    private let recorder = MeetingRecorder()
-    private let store = JSONFile<[Meeting]>("meetings.json")
-    private let calendar = EKEventStore()
+    /// Nil in demo mode, which records nothing.
+    private let recorder: MeetingRecorder!
+    private let store: JSONFile<[Meeting]>
+    private let calendar: EKEventStore?
     private var detectTimer: Timer?
     private var offeredForThisCall = false
 
@@ -29,12 +30,13 @@ final class Notetaker {
     var isRecording: Bool { state == .recording }
     /// Whether the meeting's microphone is delivering usable audio, for the Meetings page.
     private(set) var micHealth: MicHealthState = .healthy
-    var micMissingSeconds: Int { recorder.micMissingSeconds }
-    var micLevel: Float { recorder.micLevel }
-    var systemLevel: Float { recorder.systemLevel }
+    var micMissingSeconds: Int { recorder?.micMissingSeconds ?? 0 }
+    var micLevel: Float { demoInputs?.micLevel ?? recorder?.micLevel ?? 0 }
+    var systemLevel: Float { demoInputs?.systemLevel ?? recorder?.systemLevel ?? 0 }
     /// The language last heard on each side, for the live view.
-    var micLanguage: String? { recorder.micLanguage }
-    var callLanguage: String? { recorder.callLanguage }
+    var micLanguage: String? { demoInputs?.micLanguage ?? recorder?.micLanguage }
+    var callLanguage: String? { demoInputs?.callLanguage ?? recorder?.callLanguage }
+    private let demoInputs: DemoContent.LiveInputs?
     /// Bumped every second while recording so level meters redraw.
     private(set) var levelTick = 0
     private var warnedSilentSystem = false
@@ -42,7 +44,12 @@ final class Notetaker {
 
     init(model: AppModel) {
         self.model = model
-        meetings = (store.load() ?? []).map { m in
+        recorder = MeetingRecorder()
+        store = JSONFile<[Meeting]>("meetings.json")
+        calendar = EKEventStore()
+        demoInputs = nil
+        let loaded = store.load() ?? []
+        meetings = loaded.map { m in
             guard m.status == .recording || m.status == .writingNotes else { return m }
             var fixed = m
             fixed.status = .failed
@@ -59,6 +66,22 @@ final class Notetaker {
         }
         detectTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.detect() }
+        }
+    }
+
+    /// Demo mode: the given meetings in memory, no recorder, no timers, no calendar.
+    init(demoModel: AppModel, content: DemoContent) {
+        model = demoModel
+        recorder = nil
+        store = .discarding("meetings.json")
+        calendar = nil
+        demoInputs = content.liveInputs
+        meetings = content.meetings
+        if let live = content.liveMeeting {
+            self.live = live
+            state = .recording
+            startedAt = content.now.addingTimeInterval(-767)
+            micHealth = content.liveInputs?.micHealth ?? .healthy
         }
     }
 
@@ -347,6 +370,7 @@ final class Notetaker {
     var calendarAllowed: Bool { EKEventStore.authorizationStatus(for: .event) == .fullAccess }
 
     func requestCalendar() {
+        guard let calendar else { return }
         Task {
             let granted = (try? await calendar.requestFullAccessToEvents()) ?? false
             if !granted {
@@ -357,7 +381,7 @@ final class Notetaker {
     }
 
     private func currentCalendarEvent() -> (title: String, attendees: [String])? {
-        guard calendarAllowed else { return nil }
+        guard calendarAllowed, let calendar else { return nil }
         let now = Date()
         let predicate = calendar.predicateForEvents(withStart: now.addingTimeInterval(-3 * 3_600), end: now.addingTimeInterval(15 * 60), calendars: nil)
         let event = calendar.events(matching: predicate)

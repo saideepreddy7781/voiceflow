@@ -11,37 +11,26 @@ struct SnippetsPage: View {
     @State private var notice: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                PageHeader(title: "Snippets", subtitle: "Say a short cue and VoiceFlow types the full text, on its own or inside a sentence.") {
-                    HStack(spacing: 8) {
-                        Button("Import") { importFile() }
-                        Button("Add new") { adding = true }.buttonStyle(.borderedProminent)
-                    }
-                }
-                if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
-
-                if model.snippets.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "text.badge.plus").font(.system(size: 28)).foregroundStyle(.secondary)
-                        Text("No snippets yet. Try one for your calendar link, address or a reply you send often.")
-                            .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity).padding(.vertical, 40)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(model.snippets) { snippet in
-                            SnippetRow(snippet: snippet, onEdit: { editing = snippet }, onDelete: { deleting = snippet })
-                            if snippet.id != model.snippets.last?.id { Divider() }
-                        }
-                    }
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.03)))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.07)))
+        Page(spacing: Spacing.md) {
+            PageHeader(title: "Snippets", subtitle: "Say a short cue and VoiceFlow types the full text, on its own or inside a sentence.") {
+                HStack(spacing: Spacing.xs) {
+                    Button("Import") { importFile() }.buttonStyle(.vfSecondary)
+                    Button { adding = true } label: { Label("Add snippet", systemImage: "plus") }.buttonStyle(.vfPrimary)
                 }
             }
-            .padding(28)
-            .frame(maxWidth: 820, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            if let notice { Text(notice).font(TypeScale.callout).foregroundStyle(Palette.muted) }
+
+            if model.snippets.isEmpty {
+                EmptyState(symbol: "list.bullet.rectangle", text: "No snippets yet. Try one for your calendar link, address or a reply you send often.")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(model.snippets) { snippet in
+                        SnippetRow(snippet: snippet, onEdit: { editing = snippet }, onDelete: { deleting = snippet })
+                        if snippet.id != model.snippets.last?.id { RowDivider() }
+                    }
+                }
+                .rowGroupSurface()
+            }
         }
         .sheet(isPresented: $adding) { SnippetEditor(model: model, snippet: nil) }
         .sheet(item: $editing) { SnippetEditor(model: model, snippet: $0) }
@@ -71,18 +60,19 @@ private struct SnippetRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(snippet.trigger).font(.body.weight(.semibold)).frame(width: 200, alignment: .leading)
-            Image(systemName: "arrow.right").font(.caption).foregroundStyle(.secondary).padding(.top, 3)
-            Text(snippet.expansion).foregroundStyle(.secondary).lineLimit(3)
-            Spacer()
-            HStack(spacing: 2) {
+        HStack(alignment: .top, spacing: Spacing.sm) {
+            Text(snippet.trigger).font(TypeScale.bodyMedium).foregroundStyle(Palette.foreground)
+                .lineLimit(2).frame(width: 180, alignment: .leading)
+            Image(systemName: "arrow.right").font(.system(size: 11)).foregroundStyle(Palette.subtle).padding(.top, 4).accessibilityLabel("types")
+            Text(snippet.expansion).font(TypeScale.body).foregroundStyle(Palette.muted).lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HoverActions(visible: hovering) {
                 IconButton(symbol: "pencil", help: "Edit", action: onEdit)
                 IconButton(symbol: "trash", help: "Delete", action: onDelete)
             }
-            .opacity(hovering ? 1 : 0)
         }
-        .padding(.horizontal, 14).padding(.vertical, 11)
+        .padding(.horizontal, Spacing.md).padding(.vertical, 12)
+        .background(hovering ? Palette.hover : Color.clear)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
@@ -95,32 +85,37 @@ private struct SnippetEditor: View {
     @State private var trigger = ""
     @State private var expansion = ""
     @State private var error: String?
+    @FocusState private var editorFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(snippet == nil ? "Add snippet" : "Edit snippet").font(.title2.bold())
-            Text("Snippet").font(.callout.weight(.medium))
-            TextField("e.g. my calendar link", text: $trigger).textFieldStyle(.roundedBorder)
-            Text("Expansion").font(.callout.weight(.medium))
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            Text(snippet == nil ? "Add snippet" : "Edit snippet").font(TypeScale.sectionTitle).foregroundStyle(Palette.foreground)
+            Text("Cue").font(TypeScale.calloutMedium).foregroundStyle(Palette.foreground)
+            InputField(prompt: "e.g. my calendar link", text: $trigger)
+            Text("Text to type").font(TypeScale.calloutMedium).foregroundStyle(Palette.foreground)
             TextEditor(text: $expansion)
-                .font(.body)
+                .font(TypeScale.body)
+                .scrollContentBackground(.hidden)
+                .focused($editorFocused)
+                .padding(Spacing.xs)
                 .frame(height: 140)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.15)))
-            HStack {
-                Text("\(trigger.count)/\(Snippet.maxTrigger) · \(expansion.count)/\(Snippet.maxExpansion)")
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                .background(RoundedRectangle(cornerRadius: Radius.control, style: .continuous).fill(Palette.surface))
+                .overlay(RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(editorFocused ? Palette.focusRing : Palette.hairlineStrong, lineWidth: editorFocused ? 2 : 1))
+                .accessibilityLabel("Text to type")
+            Text("\(trigger.count)/\(Snippet.maxTrigger) · \(expansion.count)/\(Snippet.maxExpansion)")
+                .font(TypeScale.caption).monospacedDigit().foregroundStyle(Palette.muted)
+            if let error { AttentionLine(text: error) }
+            HStack(spacing: Spacing.xs) {
                 Spacer()
-            }
-            if let error { Text(error).foregroundStyle(.red).font(.callout) }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.vfSecondary)
                 Button(snippet == nil ? "Add snippet" : "Save changes", action: save)
-                    .keyboardShortcut(.return, modifiers: .command).buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command).buttonStyle(.vfPrimary)
             }
         }
-        .padding(24)
+        .padding(Spacing.lg)
         .frame(width: 480)
+        .background(Palette.window)
         .onAppear {
             trigger = snippet?.trigger ?? ""
             expansion = snippet?.expansion ?? ""

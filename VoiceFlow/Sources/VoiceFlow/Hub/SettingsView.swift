@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import VoiceFlowCore
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, notetaker, system, keys, privacy, advanced
+    case general, notetaker, system, keys, privacy, advanced, about
     var id: String { rawValue }
 
     var title: String {
@@ -16,17 +16,19 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .keys: "API keys"
         case .privacy: "Data & Privacy"
         case .advanced: "Advanced"
+        case .about: "About"
         }
     }
 
     var symbol: String {
         switch self {
         case .general: "slider.horizontal.3"
-        case .notetaker: "person.2.wave.2"
+        case .notetaker: "person.2"
         case .system: "macwindow"
         case .keys: "key"
         case .privacy: "lock.shield"
         case .advanced: "wrench.and.screwdriver"
+        case .about: "info.circle"
         }
     }
 }
@@ -45,26 +47,21 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(SettingsSection.allCases) { section in
-                    Button { selection.section = section } label: {
-                        Label(section.title, systemImage: section.symbol)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10).padding(.vertical, 7)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(selection.section == section ? Color.accentColor.opacity(0.15) : .clear))
-                            .contentShape(Rectangle())
+                    SidebarRow(title: section.title, symbol: section.symbol, selected: selection.section == section) {
+                        selection.section = section
                     }
-                    .buttonStyle(.plain)
                 }
                 Spacer()
             }
-            .padding(.horizontal, 10).padding(.top, 34).padding(.bottom, 10)
-            .frame(width: 190)
-            .background(Color.primary.opacity(0.03))
+            .padding(.horizontal, 10).padding(.top, 44).padding(.bottom, 10)
+            .frame(width: 200)
+            .background(SidebarBackground())
 
-            Divider()
+            Rectangle().fill(Palette.hairline).frame(width: 1)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(selection.section.title).font(.system(size: 22, weight: .bold))
+            VerticalScroll {
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    Text(selection.section.title).font(TypeScale.pageTitle).foregroundStyle(Palette.foreground).accessibilityAddTraits(.isHeader)
                     switch selection.section {
                     case .general: GeneralSettings(model: model)
                     case .notetaker: NotetakerSettings(model: model, notetaker: model.notetaker)
@@ -72,12 +69,94 @@ struct SettingsView: View {
                     case .keys: KeySettings(model: model)
                     case .privacy: PrivacySettings(model: model)
                     case .advanced: AdvancedSettings(model: model)
+                    case .about: AboutSettings(model: model, updates: model.updates)
                     }
                 }
-                .padding(.horizontal, 26).padding(.top, 30).padding(.bottom, 26)
+                .padding(.horizontal, Spacing.xl).padding(.top, Spacing.xl).padding(.bottom, Metrics.pagePadding)
+                .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(Palette.window)
         }
+        .background(Palette.window)
+        .tint(Palette.primary)
+        .focusEffectDisabled()
+    }
+}
+
+// MARK: Shared rows
+
+struct SettingsGroup<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            SectionHeading(text: title)
+            VStack(alignment: .leading, spacing: Spacing.sm) { content }
+                .padding(Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardSurface()
+        }
+    }
+}
+
+/// A label on the left, a control on the right.
+struct SettingRow<Control: View>: View {
+    let title: String
+    var detail: String? = nil
+    @ViewBuilder var control: Control
+
+    var body: some View {
+        HStack(alignment: detail == nil ? .center : .top, spacing: Spacing.md) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(TypeScale.body).foregroundStyle(Palette.foreground)
+                if let detail { HelpText(detail) }
+            }
+            Spacer(minLength: Spacing.md)
+            control
+        }
+        .frame(minHeight: 24)
+    }
+}
+
+struct HelpText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(TypeScale.callout).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A switch row.
+struct SettingToggle: View {
+    let title: String
+    var detail: String? = nil
+    @Binding var isOn: Bool
+
+    var body: some View {
+        SettingRow(title: title, detail: detail) {
+            Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(VFSwitchStyle())
+        }
+    }
+}
+
+struct ShortcutLine: View {
+    let action: String
+    let keys: [String]
+    var body: some View {
+        HStack(spacing: Spacing.xs) {
+            Text(action).font(TypeScale.body).foregroundStyle(Palette.foreground)
+            Spacer(minLength: Spacing.md)
+            ForEach(keys, id: \.self) { KeyCap(text: $0) }
+        }
+        .frame(minHeight: 24)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -87,13 +166,18 @@ private struct GeneralSettings: View {
     @Bindable var model: AppModel
     @State private var tester = MicTester()
 
+    private var hotkey: String { model.preferences.hotkey.shortName.lowercased() }
+
     var body: some View {
         SettingsGroup("Shortcuts") {
-            Picker("Push to talk", selection: $model.preferences.hotkey) {
-                ForEach(Hotkey.allCases) { Text($0.displayName).tag($0) }
+            SettingRow(title: "Push to talk", detail: "Hold, speak, let go.") {
+                Picker("Push to talk", selection: $model.preferences.hotkey) {
+                    ForEach(Hotkey.allCases) { Text($0.displayName).tag($0) }
+                }
+                .labelsHidden().fixedSize()
             }
-            ShortcutLine(action: "Hands-free", keys: ["\(model.preferences.hotkey.shortName.lowercased()) + space", "double-tap"])
-            ShortcutLine(action: "Command Mode", keys: ["\(model.preferences.hotkey.shortName.lowercased()) + ⌃"])
+            ShortcutLine(action: "Hands-free", keys: ["\(hotkey) + space", "double-tap"])
+            ShortcutLine(action: "Command Mode", keys: ["\(hotkey) + ⌃"])
             ShortcutLine(action: "Paste last transcript", keys: ["⌃⌘V"])
             ShortcutLine(action: "Copy last transcript", keys: ["⌃⌘C"])
             ShortcutLine(action: "Open Scratchpad", keys: ["⌥S"])
@@ -101,33 +185,35 @@ private struct GeneralSettings: View {
         }
 
         SettingsGroup("Microphone") {
-            Picker("Input", selection: $model.preferences.inputDeviceUID) {
-                Text("System default").tag("")
-                ForEach(model.inputDevices) { Text($0.name).tag($0.uid) }
+            SettingRow(title: "Input") {
+                Picker("Input", selection: $model.preferences.inputDeviceUID) {
+                    Text("System default").tag("")
+                    ForEach(model.inputDevices) { Text($0.name).tag($0.uid) }
+                }
+                .labelsHidden().fixedSize()
+                .onAppear { model.refreshInputDevices() }
             }
-            .onAppear { model.refreshInputDevices() }
-            HStack {
-                LevelMeter(level: tester.level, bars: 20)
-                Spacer()
+            HStack(spacing: Spacing.md) {
+                SegmentedMeter(level: AppRuntime.isDemo ? 0.6 : tester.level)
                 Button(tester.running ? "Stop test" : "Test microphone") {
                     tester.running ? tester.stop() : tester.start(deviceUID: model.preferences.inputDeviceUID)
                 }
+                .buttonStyle(.vf(.secondary, compact: true))
             }
-            if let error = tester.error { Text(error).font(.callout).foregroundStyle(.red) }
+            if let error = tester.error { AttentionLine(text: error) }
         }
         .onDisappear { tester.stop() }
 
         SettingsGroup("My languages") {
-            Text(model.preferences.languages.count == 1
-                 ? "VoiceFlow listens for \(name(model.preferences.languages[0]))."
-                 : "Pick every language you speak. VoiceFlow detects which one you're using and checks it against this list. In meetings, other people can speak anything.")
-                .font(.callout).foregroundStyle(.secondary)
+            HelpText(model.preferences.languages.count == 1
+                     ? "VoiceFlow listens for \(name(model.preferences.languages[0]))."
+                     : "Pick every language you speak. VoiceFlow detects which one you're using and checks it against this list. In meetings, other people can speak anything.")
             LanguagePicker(selection: $model.preferences.languages)
             if model.preferences.speaksTelugu {
-                TeluguWritingPicker(selection: $model.preferences.teluguScript)
+                ScriptPicker(title: "Write Telugu as", selection: $model.preferences.teluguScript, name: \.displayName, example: \.example)
             }
             if model.preferences.speaksHindi {
-                HindiWritingPicker(selection: $model.preferences.hindiScript)
+                ScriptPicker(title: "Write Hindi as", selection: $model.preferences.hindiScript, name: \.displayName, example: \.example)
             }
         }
     }
@@ -137,80 +223,82 @@ private struct GeneralSettings: View {
     }
 }
 
+/// Language chips. The common ones first; selected languages stay visible when the list is collapsed.
 struct LanguagePicker: View {
     @Binding var selection: [String]
+    @State private var showAll = false
+    private static let commonCount = 11
+
+    private var options: [(code: String, name: String)] {
+        guard !showAll else { return Languages.options }
+        return Languages.options.enumerated().filter { $0.offset < Self.commonCount || selection.contains($0.element.code) }.map(\.element)
+    }
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)], alignment: .leading, spacing: 6) {
-            ForEach(Languages.options, id: \.code) { option in
-                Toggle(option.name, isOn: Binding(
-                    get: { selection.contains(option.code) },
-                    set: { on in
-                        if on { selection.append(option.code) } else { selection.removeAll { $0 == option.code } }
-                    }))
-                .toggleStyle(.checkbox)
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            FlowLayout {
+                ForEach(options, id: \.code) { option in
+                    LanguageChip(name: option.name, selected: selection.contains(option.code)) {
+                        if selection.contains(option.code) { selection.removeAll { $0 == option.code } }
+                        else { selection.append(option.code) }
+                    }
+                }
             }
+            Button(showAll ? "Show fewer languages" : "Show all languages") { showAll.toggle() }.buttonStyle(.vfLink)
         }
     }
 }
 
-private struct ShortcutLine: View {
-    let action: String
-    let keys: [String]
+private struct LanguageChip: View {
+    let name: String
+    let selected: Bool
+    let toggle: () -> Void
+    @State private var hovering = false
+
     var body: some View {
-        HStack {
-            Text(action)
-            Spacer()
-            ForEach(keys, id: \.self) { KeyCap(text: $0) }
+        Button(action: toggle) {
+            Text(name)
+                .font(TypeScale.callout.weight(selected ? .medium : .regular))
+                .foregroundStyle(selected ? Palette.onPrimary : Palette.muted)
+                .padding(.horizontal, Spacing.sm).frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 14, style: .circular).fill(selected ? Palette.primary : (hovering ? Palette.hover : Color.clear)))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .circular).strokeBorder(selected ? Color.clear : Palette.hairlineStrong))
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.quiet(radius: 14))
+        .onHover { hovering = $0 }
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
-struct TeluguWritingPicker: View {
-    @Binding var selection: TeluguScript
+/// Telugu and Hindi writing choices: one radio row per script, with an example.
+struct ScriptPicker<Script: CaseIterable & Identifiable & Hashable>: View where Script.AllCases: RandomAccessCollection {
+    let title: String
+    @Binding var selection: Script
+    let name: KeyPath<Script, String>
+    let example: KeyPath<Script, String>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Write Telugu as").font(.callout.weight(.semibold))
-            ForEach(TeluguScript.allCases) { script in
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text(title).font(TypeScale.calloutMedium).foregroundStyle(Palette.foreground).accessibilityAddTraits(.isHeader)
+            ForEach(Script.allCases) { script in
                 Button { selection = script } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: selection == script ? "largecircle.fill.circle" : "circle")
-                            .foregroundStyle(selection == script ? Color.accentColor : .secondary)
+                    HStack(alignment: .top, spacing: Spacing.xs) {
+                        RadioMark(isOn: selection == script).padding(.top, 1)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(script.displayName)
-                            Text(script.example).font(.callout).foregroundStyle(.secondary)
+                            Text(script[keyPath: name]).font(TypeScale.callout).foregroundStyle(Palette.foreground)
+                            Text(script[keyPath: example]).font(TypeScale.callout).foregroundStyle(Palette.muted)
                         }
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.quiet())
+                .accessibilityLabel("\(script[keyPath: name]): \(script[keyPath: example])")
+                .accessibilityAddTraits(selection == script ? .isSelected : [])
             }
         }
-    }
-}
-
-struct HindiWritingPicker: View {
-    @Binding var selection: HindiScript
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Write Hindi as").font(.callout.weight(.semibold))
-            ForEach(HindiScript.allCases) { script in
-                Button { selection = script } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: selection == script ? "largecircle.fill.circle" : "circle")
-                            .foregroundStyle(selection == script ? Color.accentColor : .secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(script.displayName)
-                            Text(script.example).font(.callout).foregroundStyle(.secondary)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
+        .padding(.top, Spacing.xxs)
     }
 }
 
@@ -222,17 +310,20 @@ private struct NotetakerSettings: View {
 
     var body: some View {
         SettingsGroup("Meetings") {
-            Toggle("Offer to take notes when a call starts (Zoom, Meet, Teams, Webex, FaceTime)", isOn: $model.preferences.meetingsDetect)
-            Toggle("Record the other people (system audio)", isOn: $model.preferences.meetingsSystemAudio)
-            Text("macOS asks once for permission to record this computer's audio. Without it, only your microphone is recorded.")
-                .font(.callout).foregroundStyle(.secondary)
-            Toggle("Remind me to tell everyone I'm taking notes", isOn: $model.preferences.meetingsConsentReminder)
+            SettingToggle(title: "Offer to take notes when a call starts", detail: "Zoom, Meet, Teams, Webex, FaceTime", isOn: $model.preferences.meetingsDetect)
+            SettingToggle(title: "Record the other people (system audio)",
+                          detail: "macOS asks once for permission to record this computer's audio. Without it, only your microphone is recorded.",
+                          isOn: $model.preferences.meetingsSystemAudio)
+            SettingToggle(title: "Remind me to tell everyone I'm taking notes", isOn: $model.preferences.meetingsConsentReminder)
         }
         SettingsGroup("Notes") {
-            Picker("Write notes in", selection: $model.preferences.meetingsNotesLanguage) {
-                ForEach(MeetingNotesWriter.NotesLanguage.allCases) { Text($0.displayName).tag($0) }
+            SettingRow(title: "Write notes in") {
+                Picker("Write notes in", selection: $model.preferences.meetingsNotesLanguage) {
+                    ForEach(MeetingNotesWriter.NotesLanguage.allCases) { Text($0.displayName).tag($0) }
+                }
+                .labelsHidden().fixedSize()
             }
-            Toggle("Use my calendar for meeting titles and names", isOn: Binding(
+            SettingToggle(title: "Use my calendar for meeting titles and names", isOn: Binding(
                 get: { model.preferences.meetingsUseCalendar },
                 set: { on in
                     model.preferences.meetingsUseCalendar = on
@@ -240,23 +331,25 @@ private struct NotetakerSettings: View {
                 }))
         }
         SettingsGroup("Sync") {
-            HStack {
+            HStack(spacing: Spacing.xs) {
                 if let folder = notetaker.folderURL {
-                    Label(folder.path, systemImage: "folder").lineLimit(1).truncationMode(.middle)
+                    Label(folder.path, systemImage: "folder")
+                        .font(TypeScale.callout).foregroundStyle(Palette.foreground).lineLimit(1).truncationMode(.middle)
+                        .help(folder.path)
                 } else {
-                    Text("Notes stay in VoiceFlow only.").foregroundStyle(.secondary)
+                    Text("Notes stay in VoiceFlow only.").font(TypeScale.callout).foregroundStyle(Palette.muted)
                 }
-                Spacer()
-                Button(notetaker.folderURL == nil ? "Choose folder…" : "Change…") { notetaker.chooseFolder() }
-                if notetaker.folderURL != nil { Button("Stop syncing") { model.preferences.meetingsFolder = "" } }
+                Spacer(minLength: Spacing.sm)
+                Button(notetaker.folderURL == nil ? "Choose folder…" : "Change…") { notetaker.chooseFolder() }.buttonStyle(.vf(.secondary, compact: true))
+                if notetaker.folderURL != nil {
+                    Button("Stop syncing") { model.preferences.meetingsFolder = "" }.buttonStyle(.vf(.secondary, compact: true))
+                }
             }
-            Text("Each meeting is saved as a Markdown file. Choose a folder in iCloud Drive to read your notes on iPhone and other Macs, or your Obsidian vault.")
-                .font(.callout).foregroundStyle(.secondary)
-            if let error = notetaker.lastError { Text(error).font(.callout).foregroundStyle(.orange) }
+            HelpText("Each meeting is saved as a Markdown file. Choose a folder in iCloud Drive to read your notes on iPhone and other Macs, or your Obsidian vault.")
+            if let error = notetaker.lastError { AttentionLine(text: error) }
         }
         SettingsGroup("Consent") {
-            Text("Recording a call can require everyone's permission where you live. VoiceFlow shows a red Notetaker chip while recording; tell the people on the call.")
-                .font(.callout).foregroundStyle(.secondary)
+            HelpText("Recording a call can require everyone's permission where you live. VoiceFlow shows a red Notetaker chip while recording; tell the people on the call.")
         }
     }
 }
@@ -268,36 +361,62 @@ private struct SystemSettings: View {
 
     var body: some View {
         SettingsGroup("App") {
-            Toggle("Launch at login", isOn: $model.preferences.launchAtLogin)
-            Toggle("Show app in Dock", isOn: $model.preferences.showInDock)
-            if let error = model.lastError { Text(error).font(.callout).foregroundStyle(.red) }
+            SettingToggle(title: "Launch at login", isOn: $model.preferences.launchAtLogin)
+            SettingToggle(title: "Show app in Dock", isOn: $model.preferences.showInDock)
+            if let error = model.lastError { AttentionLine(text: error) }
         }
         SettingsGroup("Flow Bar") {
-            Toggle(model.flowBarHiddenForHour ? "Show Flow Bar at all times (hidden for one hour)" : "Show Flow Bar at all times",
-                   isOn: $model.preferences.showBarWhenIdle)
-            Text("Right-click the resting bar to hide it for an hour or switch language.").font(.callout).foregroundStyle(.secondary)
+            SettingToggle(title: model.flowBarHiddenForHour ? "Show Flow Bar at all times (hidden for one hour)" : "Show Flow Bar at all times",
+                          detail: "Off by default: the bar appears only while you dictate or when VoiceFlow has something to tell you. Right-click the resting bar to hide it for an hour or switch language.",
+                          isOn: $model.preferences.showBarWhenIdle)
         }
         SettingsGroup("Sound") {
-            Toggle("Play a sound when dictation starts", isOn: $model.preferences.playSounds)
-            Toggle("Mute other audio while dictating", isOn: $model.preferences.muteAudioWhileDictating)
+            SettingToggle(title: "Play a sound when dictation starts", isOn: $model.preferences.playSounds)
+            SettingToggle(title: "Mute other audio while dictating", isOn: $model.preferences.muteAudioWhileDictating)
         }
         SettingsGroup("Permissions") {
             PermissionRow(title: "Microphone", granted: model.microphoneStatus == .authorized) { model.requestMicrophone() }
             PermissionRow(title: "Accessibility", granted: model.hasAccessibility) { model.requestAccessibility() }
-            HStack {
-                Text("Hotkey listener")
+            HStack(spacing: Spacing.xs) {
+                Image(systemName: model.hotkeyMode == .active ? "checkmark.circle" : "exclamationmark.triangle")
+                    .foregroundStyle(model.hotkeyMode == .active ? Palette.muted : Palette.signal).accessibilityHidden(true)
+                Text("Hotkey listener").font(TypeScale.body).foregroundStyle(Palette.foreground)
                 Spacer()
                 Text(model.hotkeyMode == .active ? "Active" : model.hotkeyMode == .listenOnly ? "Watch-only" : "Off")
-                    .foregroundStyle(model.hotkeyMode == .active ? .green : .orange)
+                    .font(TypeScale.callout)
+                    .foregroundStyle(model.hotkeyMode == .active ? Palette.muted : Palette.signal)
             }
+            .frame(minHeight: 24)
             if model.fnKeyNeedsChange, let fn = model.fnSetting {
-                HStack {
-                    Text("🌐 key is set to “\(fn.displayName)”").foregroundStyle(.orange)
+                HStack(spacing: Spacing.xs) {
+                    AttentionLine(text: "🌐 key is set to “\(fn.displayName)”")
                     Spacer()
-                    Button("Keyboard Settings…") { model.openFnKeySettings() }
+                    Button("Keyboard Settings…") { model.openFnKeySettings() }.buttonStyle(.vf(.secondary, compact: true))
                 }
             }
         }
+    }
+}
+
+struct PermissionRow: View {
+    let title: String
+    let granted: Bool
+    let request: () -> Void
+
+    var body: some View {
+        HStack(spacing: Spacing.xs) {
+            Image(systemName: granted ? "checkmark.circle" : "exclamationmark.triangle")
+                .foregroundStyle(granted ? Palette.muted : Palette.signal).accessibilityHidden(true)
+            Text(title).font(TypeScale.body).foregroundStyle(Palette.foreground)
+            Spacer()
+            if granted {
+                Text("Allowed").font(TypeScale.callout).foregroundStyle(Palette.muted)
+            } else {
+                Button("Allow…", action: request).buttonStyle(.vf(.secondary, compact: true))
+            }
+        }
+        .frame(minHeight: 24)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -313,9 +432,103 @@ private struct KeySettings: View {
         SettingsGroup("Gemini (optional)") {
             KeyRow(model: model, key: .gemini)
         }
-        if let error = model.lastError { Text(error).foregroundStyle(.red).font(.callout) }
-        Text("Keys are stored in your macOS Keychain and sent only to their own provider.")
-            .font(.callout).foregroundStyle(.secondary)
+        if let error = model.lastError { AttentionLine(text: error) }
+        HelpText("Keys are stored in your macOS Keychain and sent only to their own provider.")
+    }
+}
+
+struct KeyRow: View {
+    let model: AppModel
+    let key: SecretKey
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    private var saved: Bool { model.storedKeys.contains(key) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            HStack(spacing: Spacing.xs) {
+                Badge(text: saved ? "Saved in Keychain" : "Not set")
+                Spacer()
+                if saved {
+                    Button("Test") { Task { await model.checkKey(key) } }
+                        .buttonStyle(.vf(.secondary, compact: true))
+                        .disabled(model.checking.contains(key))
+                    Button("Remove") { model.deleteKey(key) }
+                        .buttonStyle(RemoveLinkStyle())
+                }
+            }
+            HStack(spacing: Spacing.xs) {
+                ZStack(alignment: .leading) {
+                    if draft.isEmpty {
+                        Text(saved ? "Paste a new key to replace it" : "Paste key")
+                            .font(TypeScale.callout).foregroundStyle(Palette.subtle).allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                    SecureField("", text: $draft)
+                        .textFieldStyle(.plain).font(TypeScale.callout)
+                        .focused($focused)
+                }
+                .fieldChrome(focused: focused)
+                .accessibilityLabel("API key")
+                Button("Save") {
+                    model.saveKey(draft, for: key)
+                    draft = ""
+                    Task { await model.checkKey(key) }
+                }
+                .buttonStyle(.vfPrimary)
+                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if model.checking.contains(key) {
+                ProgressView().controlSize(.small)
+            } else if let result = model.keyCheck[key] {
+                if result.isOK {
+                    Label(result.summary, systemImage: "checkmark.circle").font(TypeScale.callout).foregroundStyle(Palette.muted)
+                } else {
+                    AttentionLine(text: result.summary)
+                }
+            } else if key == .groq {
+                OutboundLink(title: "Get a free key at console.groq.com", url: AppLinks.groqKeys)
+            } else {
+                HelpText("Get one at \(key.whereToGetIt).")
+            }
+        }
+    }
+}
+
+/// The one quiet destructive action on the key row.
+private struct RemoveLinkStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        StyledBody(configuration: configuration)
+    }
+
+    private struct StyledBody: View {
+        let configuration: Configuration
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            configuration.label
+                .font(TypeScale.calloutMedium)
+                .foregroundStyle(Palette.signal.opacity(configuration.isPressed ? 0.6 : 1))
+                .padding(.horizontal, Spacing.xs)
+                .overlay(FocusRing(radius: 3, visible: focused))
+        }
+    }
+}
+
+extension KeyCheckResult {
+    var isOK: Bool {
+        if case .ok = self { return true }
+        return false
+    }
+}
+
+/// The Zero Data Retention line, shown in onboarding's Groq step and in Settings.
+struct ZeroDataRetentionNote: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            HelpText("Groq's services agreement doesn't let it train on your API data. It may keep logs for up to 30 days for abuse and reliability. Turning on Zero Data Retention in the Groq console stops that.")
+            OutboundLink(title: "Open Data Controls in the Groq console", url: AppLinks.groqDataControls)
+        }
     }
 }
 
@@ -328,25 +541,30 @@ private struct PrivacySettings: View {
 
     var body: some View {
         SettingsGroup("History") {
-            Picker("Keep transcripts", selection: $model.preferences.historyRetentionDays) {
-                Text("Forever").tag(-1)
-                Text("30 days").tag(30)
-                Text("7 days").tag(7)
-                Text("Never store my data").tag(0)
+            SettingRow(title: "Keep transcripts", detail: "Transcripts stay on this Mac, readable only by your account.") {
+                Picker("Keep transcripts", selection: $model.preferences.historyRetentionDays) {
+                    Text("Forever").tag(-1)
+                    Text("30 days").tag(30)
+                    Text("7 days").tag(7)
+                    Text("Never store my data").tag(0)
+                }
+                .labelsHidden().fixedSize()
             }
-            Text("Transcripts stay on this Mac, readable only by your account.").font(.callout).foregroundStyle(.secondary)
-            HStack {
-                Button("Export my data…") { export() }
-                Button("Show data folder") { NSWorkspace.shared.open(AppPaths.supportFolder) }
+            HStack(spacing: Spacing.xs) {
+                Button("Export my data…") { export() }.buttonStyle(.vf(.secondary, compact: true))
+                Button("Show data folder") { NSWorkspace.shared.open(AppPaths.supportFolder) }.buttonStyle(.vf(.secondary, compact: true))
                 Spacer()
-                Button("Delete all history", role: .destructive) { confirmClear = true }
+                Button("Delete all history") { confirmClear = true }.buttonStyle(RemoveLinkStyle())
             }
-            if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
+            if let notice { HelpText(notice) }
         }
         SettingsGroup("What leaves your Mac") {
-            Text("Sent to Groq: audio while you dictate, the transcript, the app name, up to 120 characters before the cursor and names in that field; in Command Mode, the selected text and the field's text. Nothing from password fields, password managers or secure input, and no screen text from terminals. VoiceFlow never stores audio.")
-                .font(.callout).foregroundStyle(.secondary)
-            Button("Groq's privacy policy") { NSWorkspace.shared.open(AppLinks.groqPrivacy) }
+            HelpText("Sent to Groq: audio while you dictate, the transcript, the app name, up to 120 characters before the cursor and names in that field; in Command Mode, the selected text and the field's text. Nothing from password fields, password managers or secure input, and no screen text from terminals. VoiceFlow never stores audio.")
+            HelpText("Sent to api.github.com: a request for the latest release, at launch and once a day. It carries nothing about you or your dictations. Turn it off in About.")
+            OutboundLink(title: "Groq's privacy policy", url: AppLinks.groqPrivacy)
+        }
+        SettingsGroup("Zero Data Retention") {
+            ZeroDataRetentionNote()
         }
         .alert("Delete all history?", isPresented: $confirmClear) {
             Button("Delete", role: .destructive) { model.clearHistory() }
@@ -378,118 +596,82 @@ private struct AdvancedSettings: View {
 
     var body: some View {
         SettingsGroup("Features") {
-            Toggle("Command Mode (\(model.preferences.hotkey.shortName.lowercased()) + ⌃)", isOn: $model.preferences.commandModeEnabled)
-            Toggle("Learn words from my corrections", isOn: $model.preferences.autoLearnWords)
-            Toggle("Whisper mode: pick up quiet speech", isOn: $model.preferences.whisperMode)
+            SettingToggle(title: "Command Mode (\(model.preferences.hotkey.shortName.lowercased()) + ⌃)", isOn: $model.preferences.commandModeEnabled)
+            SettingToggle(title: "Learn words from my corrections", isOn: $model.preferences.autoLearnWords)
+            SettingToggle(title: "Whisper mode: pick up quiet speech", isOn: $model.preferences.whisperMode)
         }
         SettingsGroup("Models (Groq)") {
-            Picker("Speech", selection: $model.preferences.transcriptionModel) {
-                ForEach(Groq.transcriptionModels, id: \.self) { Text($0).tag($0) }
-            }
-            Picker("Cleanup", selection: $model.preferences.cleanupModel) {
-                ForEach(Groq.textModels, id: \.self) { Text($0).tag($0) }
-            }
-            Picker("Command Mode", selection: $model.preferences.commandModel) {
-                ForEach(Groq.textModels, id: \.self) { Text($0).tag($0) }
-            }
+            modelPicker("Speech", selection: $model.preferences.transcriptionModel, options: Groq.transcriptionModels)
+            modelPicker("Cleanup", selection: $model.preferences.cleanupModel, options: Groq.textModels)
+            modelPicker("Command Mode", selection: $model.preferences.commandModel, options: Groq.textModels)
         }
         SettingsGroup("Troubleshooting") {
-            HStack {
+            HStack(spacing: Spacing.xs) {
                 Button("Copy debug report") {
                     model.copyDebugReport()
                     debugReportCopied = true
                 }
-                if debugReportCopied { Text("Copied").foregroundStyle(.secondary) }
+                .buttonStyle(.vf(.secondary, compact: true))
+                if debugReportCopied { Text("Copied").font(TypeScale.callout).foregroundStyle(Palette.muted) }
             }
-            Text("Versions, device names, recent results and timings, to paste into a bug report. It has no transcripts, window titles or API keys.")
-                .font(.callout).foregroundStyle(.secondary)
+            HelpText("Versions, device names, recent results and timings, to paste into a bug report. It has no transcripts, window titles or API keys.")
         }
         SettingsGroup("Setup") {
-            Button("Run setup again") { WindowManager.shared.showOnboarding() }
+            Button("Run setup again") { WindowManager.shared.showOnboarding() }.buttonStyle(.vf(.secondary, compact: true))
+        }
+    }
+
+    private func modelPicker(_ title: String, selection: Binding<String>, options: [String]) -> some View {
+        SettingRow(title: title) {
+            Picker(title, selection: selection) {
+                ForEach(options, id: \.self) { Text($0).tag($0) }
+            }
+            .labelsHidden().fixedSize()
         }
     }
 }
 
-// MARK: Shared
+// MARK: About
 
-struct SettingsGroup<Content: View>: View {
-    let title: String
-    @ViewBuilder var content: Content
+private struct AboutSettings: View {
+    @Bindable var model: AppModel
+    let updates: UpdateService
 
-    init(_ title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.headline)
-            VStack(alignment: .leading, spacing: 10) { content }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
+    private var statusText: String {
+        switch updates.state {
+        case .checking: "Checking for updates…"
+        case .upToDate: "You have the latest version."
+        case .available(let release): "Version \(release.version) is available."
+        case .failed: "Could not check for updates."
+        case .idle: model.preferences.checkForUpdates ? "Checked at launch and once a day." : "Automatic checks are off."
         }
     }
-}
-
-struct PermissionRow: View {
-    let title: String
-    let granted: Bool
-    let request: () -> Void
 
     var body: some View {
-        HStack {
-            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .foregroundStyle(granted ? .green : .orange)
-            Text(title)
-            Spacer()
-            if granted { Text("Allowed").foregroundStyle(.secondary) } else { Button("Allow…", action: request) }
-        }
-    }
-}
-
-struct KeyRow: View {
-    let model: AppModel
-    let key: SecretKey
-    @State private var draft = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(model.storedKeys.contains(key) ? "Saved in Keychain" : "Not set")
-                    .foregroundStyle(model.storedKeys.contains(key) ? .green : .secondary)
-                Spacer()
-                if model.storedKeys.contains(key) {
-                    Button("Test") { Task { await model.checkKey(key) } }.disabled(model.checking.contains(key))
-                    Button("Remove", role: .destructive) { model.deleteKey(key) }
+        Card {
+            HStack(spacing: Spacing.md) {
+                LogoMark(size: 56)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("VoiceFlow").font(.system(size: 20, weight: .bold)).foregroundStyle(Palette.foreground)
+                    Text("Version \(updates.currentVersion)").font(TypeScale.callout).foregroundStyle(Palette.muted)
+                    Text(statusText).font(TypeScale.callout).foregroundStyle(Palette.muted)
+                }
+                Spacer(minLength: Spacing.md)
+                if updates.available != nil {
+                    Button("View release") { updates.openRelease() }.buttonStyle(.vfPrimary)
+                } else {
+                    Button("Check for updates") { Task { await updates.check() } }.buttonStyle(.vfSecondary)
+                        .disabled(updates.state == .checking)
                 }
             }
-            HStack {
-                SecureField(model.storedKeys.contains(key) ? "Paste a new key to replace it" : "Paste key", text: $draft)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save") {
-                    model.saveKey(draft, for: key)
-                    draft = ""
-                    Task { await model.checkKey(key) }
-                }
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            if model.checking.contains(key) {
-                ProgressView().controlSize(.small)
-            } else if let result = model.keyCheck[key] {
-                Text(result.summary).font(.callout).foregroundStyle(result.isOK ? .green : .red)
-            } else {
-                Text("Get one at \(key.whereToGetIt).").font(.callout).foregroundStyle(.secondary)
-            }
         }
-    }
-}
-
-extension KeyCheckResult {
-    var isOK: Bool {
-        if case .ok = self { return true }
-        return false
+        SettingsGroup("Updates") {
+            SettingToggle(title: "Check for updates automatically",
+                          detail: "Asks GitHub for the latest release at launch and once a day. VoiceFlow never downloads an update by itself.",
+                          isOn: $model.preferences.checkForUpdates)
+        }
+        HelpText("Free and open source under the MIT License. Speech and cleanup run on your own Groq key.")
+        OutboundLink(title: "github.com/saideepreddy7781/voiceflow", url: AppLinks.repository)
     }
 }
 
@@ -498,37 +680,47 @@ extension KeyCheckResult {
 struct HelpView: View {
     let model: AppModel
 
+    private var hotkey: String { model.preferences.hotkey.shortName.lowercased() }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    LogoMark(size: 34)
-                    Text("VoiceFlow Help").font(.system(size: 22, weight: .bold))
+        VerticalScroll {
+            VStack(alignment: .leading, spacing: Spacing.lg) {
+                HStack(spacing: Spacing.sm) {
+                    LogoMark(size: 36)
+                    Text("VoiceFlow Help").font(TypeScale.pageTitle).foregroundStyle(Palette.foreground).accessibilityAddTraits(.isHeader)
                 }
                 SettingsGroup("Shortcuts") {
-                    ShortcutLine(action: "Dictate (hold)", keys: [model.preferences.hotkey.shortName.lowercased()])
-                    ShortcutLine(action: "Hands-free", keys: ["\(model.preferences.hotkey.shortName.lowercased()) + space", "double-tap"])
-                    ShortcutLine(action: "Command Mode", keys: ["\(model.preferences.hotkey.shortName.lowercased()) + ⌃"])
+                    ShortcutLine(action: "Dictate (hold)", keys: [hotkey])
+                    ShortcutLine(action: "Hands-free", keys: ["\(hotkey) + space", "double-tap"])
+                    ShortcutLine(action: "Command Mode", keys: ["\(hotkey) + ⌃"])
                     ShortcutLine(action: "Paste / copy last transcript", keys: ["⌃⌘V", "⌃⌘C"])
                     ShortcutLine(action: "Scratchpad", keys: ["⌥S"])
                     ShortcutLine(action: "Cancel", keys: ["esc"])
                 }
                 SettingsGroup("Tips") {
-                    Text("• Correct yourself out loud: “Tuesday, no actually Wednesday” types “Wednesday”.")
-                    Text("• Say “new line”, “new paragraph”, “comma” or “question mark” when you want them exactly.")
-                    Text("• Select text, hold \(model.preferences.hotkey.shortName.lowercased()) + ⌃ and say “make this more formal” or “translate to Hindi”.")
-                    Text("• Nothing typed? Press ⌃⌘V to paste your last transcript.")
+                    tip("Correct yourself out loud: “Tuesday, no actually Wednesday” types “Wednesday”.")
+                    tip("Say “new line”, “new paragraph”, “comma” or “question mark” when you want them exactly.")
+                    tip("Select text, hold \(hotkey) + ⌃ and say “make this more formal” or “translate to Hindi”.")
+                    tip("Nothing typed? Press ⌃⌘V to paste your last transcript.")
                 }
-                .font(.callout)
-                HStack {
-                    Button("Documentation") { NSWorkspace.shared.open(AppLinks.docs) }
-                    Button("Report an issue") { NSWorkspace.shared.open(AppLinks.issues) }
+                HStack(spacing: Spacing.md) {
+                    OutboundLink(title: "Documentation", url: AppLinks.docs)
+                    OutboundLink(title: "Report an issue", url: AppLinks.issues)
                     Spacer()
-                    Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Version \(model.updates.currentVersion)").font(TypeScale.caption).foregroundStyle(Palette.muted)
                 }
             }
-            .padding(24)
+            .padding(Spacing.xl)
+        }
+        .background(Palette.window)
+        .tint(Palette.primary)
+    }
+
+    private func tip(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
+            Circle().fill(Palette.subtle).frame(width: 4, height: 4).alignmentGuide(.firstTextBaseline) { $0[.bottom] + 3 }
+                .accessibilityHidden(true)
+            Text(text).font(TypeScale.callout).foregroundStyle(Palette.foreground).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

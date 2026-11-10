@@ -20,12 +20,12 @@ final class AppModel {
     var lastError: String?
 
     // Permissions and system state
-    private(set) var hasAccessibility = HotkeyMonitor.hasAccessibility
-    private(set) var hasInputMonitoring = HotkeyMonitor.hasInputMonitoring
-    private(set) var microphoneStatus = AudioRecorder.microphoneStatus
+    private(set) var hasAccessibility = false
+    private(set) var hasInputMonitoring = false
+    private(set) var microphoneStatus: AVAuthorizationStatus = .notDetermined
     private(set) var hotkeyMode: HotkeyMonitor.Mode = .stopped
-    private(set) var fnSetting = FnKeySetting.current
-    private(set) var inputDevices: [AudioInputDevice] = AudioDevices.inputDevices()
+    private(set) var fnSetting: FnKeySetting?
+    private(set) var inputDevices: [AudioInputDevice] = []
 
     // Library
     var dictionary: [DictionaryEntry] { didSet { dictionaryFile.save(dictionary) } }
@@ -42,26 +42,53 @@ final class AppModel {
     private(set) var flowBarHiddenUntil: Date?
 
     let secrets = SecretStore()
-    private let preferenceStore = PreferenceStore()
+    /// Latest-release lookups for the update notice.
+    let updates: UpdateService
+    private let preferenceStore: PreferenceStore?
     private let keyTester = KeyTester()
-    private let dictionaryFile = JSONFile<[DictionaryEntry]>("dictionary.json")
-    private let snippetsFile = JSONFile<[Snippet]>("snippets.json")
-    private let historyFile = JSONFile<[HistoryEntry]>("history.json")
-    private let notesFile = JSONFile<[Note]>("notes.json")
+    private let dictionaryFile: JSONFile<[DictionaryEntry]>
+    private let snippetsFile: JSONFile<[Snippet]>
+    private let historyFile: JSONFile<[HistoryEntry]>
+    private let notesFile: JSONFile<[Note]>
     private var monitor: HotkeyMonitor?
     private(set) var controller: DictationController!
     private(set) var notetaker: Notetaker!
     private var permissionTimer: Timer?
 
+    /// True for the `--screenshots` model: nothing is read from or written to this Mac.
+    let isDemo: Bool
+    /// Fixed in demo mode so the greeting and the rows are the same on every run.
+    private let demoNow: Date?
+    var now: Date { demoNow ?? Date() }
+
+    /// The running app. Reads preferences, files and Keychain state, and starts the hotkey listener.
     init() {
+        isDemo = false
+        demoNow = nil
         OutputMuter.recoverAfterCrash()
-        let loaded = preferenceStore.load()
+        let store = PreferenceStore()
+        let loaded = store.load()
+        preferenceStore = store
         preferences = loaded
-        dictionary = dictionaryFile.load() ?? []
-        snippets = snippetsFile.load() ?? []
-        notes = notesFile.load() ?? []
-        history = historyFile.load() ?? []
+        let dictionaryStore = JSONFile<[DictionaryEntry]>("dictionary.json")
+        let snippetStore = JSONFile<[Snippet]>("snippets.json")
+        let historyStore = JSONFile<[HistoryEntry]>("history.json")
+        let noteStore = JSONFile<[Note]>("notes.json")
+        dictionaryFile = dictionaryStore
+        snippetsFile = snippetStore
+        historyFile = historyStore
+        notesFile = noteStore
+        dictionary = dictionaryStore.load() ?? []
+        snippets = snippetStore.load() ?? []
+        notes = noteStore.load() ?? []
+        history = historyStore.load() ?? []
         diagnostics = DiagnosticsLog(file: JSONFile("diagnostics.json"), persists: loaded.historyRetentionDays != 0)
+        hasAccessibility = HotkeyMonitor.hasAccessibility
+        hasInputMonitoring = HotkeyMonitor.hasInputMonitoring
+        microphoneStatus = AudioRecorder.microphoneStatus
+        fnSetting = FnKeySetting.current
+        inputDevices = AudioDevices.inputDevices()
+        updates = UpdateService()
         controller = DictationController(model: self)
         notetaker = Notetaker(model: self)
         history = applyRetention(history, days: preferences.historyRetentionDays)
@@ -75,6 +102,33 @@ final class AppModel {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.controller.shutdown() }
         }
+        updates.setAutomatic(preferences.checkForUpdates)
+    }
+
+    /// The model behind `--screenshots`: in-memory demo data only. It never loads preferences, history,
+    /// meetings or the Keychain, never touches the mic or event tap, and has no dictation controller.
+    init(demo content: DemoContent) {
+        isDemo = true
+        demoNow = content.now
+        preferenceStore = nil
+        preferences = content.preferences
+        dictionaryFile = .discarding("dictionary.json")
+        snippetsFile = .discarding("snippets.json")
+        historyFile = .discarding("history.json")
+        notesFile = .discarding("notes.json")
+        dictionary = content.dictionary
+        snippets = content.snippets
+        notes = content.notes
+        history = content.history
+        diagnostics = DiagnosticsLog(file: .discarding("diagnostics.json"), persists: false)
+        storedKeys = content.storedKeys
+        hasAccessibility = content.hasAccessibility
+        hasInputMonitoring = content.hasAccessibility
+        microphoneStatus = content.microphoneAllowed ? .authorized : .notDetermined
+        hotkeyMode = content.hotkeyActive ? .active : .stopped
+        inputDevices = content.inputDevices
+        updates = UpdateService(demoState: content.update)
+        notetaker = Notetaker(demoModel: self, content: content)
     }
 
     private func tick() {
@@ -126,6 +180,7 @@ final class AppModel {
     }
 
     func refreshSystemState() {
+        guard !isDemo else { return }
         hasAccessibility = HotkeyMonitor.hasAccessibility
         hasInputMonitoring = HotkeyMonitor.hasInputMonitoring
         microphoneStatus = AudioRecorder.microphoneStatus
@@ -136,7 +191,10 @@ final class AppModel {
         }
     }
 
-    func refreshInputDevices() { inputDevices = AudioDevices.inputDevices() }
+    func refreshInputDevices() {
+        guard !isDemo else { return }
+        inputDevices = AudioDevices.inputDevices()
+    }
 
     // MARK: Permissions
 
@@ -231,7 +289,8 @@ final class AppModel {
     // MARK: Preferences
 
     private func preferencesChanged(from old: Preferences) {
-        preferenceStore.save(preferences)
+        guard !isDemo else { return }
+        preferenceStore?.save(preferences)
         if preferences.hotkey != old.hotkey { monitor?.setHotkey(preferences.hotkey) }
         if preferences.historyRetentionDays != old.historyRetentionDays {
             history = applyRetention(history, days: preferences.historyRetentionDays)
@@ -241,6 +300,7 @@ final class AppModel {
         if preferences.launchAtLogin != old.launchAtLogin { applyLaunchAtLogin() }
         if preferences.showBarWhenIdle != old.showBarWhenIdle || preferences.onboarded != old.onboarded { updateFlowBarVisibility() }
         if preferences.showInDock != old.showInDock { applyDockVisibility() }
+        if preferences.checkForUpdates != old.checkForUpdates { updates.setAutomatic(preferences.checkForUpdates) }
     }
 
     private func applyLaunchAtLogin() {
@@ -426,6 +486,7 @@ final class AppModel {
     var hasGroqKey: Bool { storedKeys.contains(.groq) }
 
     func keyAsync(_ key: SecretKey = .groq) async -> String? {
+        guard !isDemo else { return nil }
         if let cached = cachedKeys[key] { return cached }
         guard storedKeys.contains(key) else { return nil }
         let secrets = self.secrets
@@ -435,6 +496,7 @@ final class AppModel {
     }
 
     func saveKey(_ value: String, for key: SecretKey) {
+        guard !isDemo else { return }
         do {
             try secrets.save(value, for: key)
             cachedKeys[key] = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -447,6 +509,7 @@ final class AppModel {
     }
 
     func deleteKey(_ key: SecretKey) {
+        guard !isDemo else { return }
         do {
             try secrets.delete(key)
             cachedKeys[key] = nil
@@ -468,6 +531,7 @@ final class AppModel {
     }
 
     private func refreshStoredKeys() {
+        guard !isDemo else { return }
         storedKeys = Set(SecretKey.allCases.filter { secrets.contains($0) })
     }
 }

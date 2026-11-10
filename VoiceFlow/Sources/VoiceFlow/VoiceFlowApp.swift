@@ -1,7 +1,18 @@
 import AppKit
 import SwiftUI
 
+/// `--screenshots <dir>` renders the UI with demo data and quits. Everything else starts the real app.
 @main
+@MainActor
+enum Launch {
+    static func main() {
+        if let directory = ScreenshotMode.requestedDirectory(CommandLine.arguments) {
+            ScreenshotMode.run(to: directory)
+        }
+        VoiceFlowApp.main()
+    }
+}
+
 struct VoiceFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model: AppModel

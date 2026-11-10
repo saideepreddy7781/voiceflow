@@ -18,7 +18,6 @@ private enum DictionaryTab: String, CaseIterable, Identifiable {
 struct DictionaryPage: View {
     @Bindable var model: AppModel
     @State private var tab: DictionaryTab = .all
-    @State private var searching = false
     @State private var query = ""
     @State private var editing: DictionaryEntry?
     @State private var adding = false
@@ -37,43 +36,33 @@ struct DictionaryPage: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                PageHeader(title: "Dictionary", subtitle: "Names, jargon and spellings VoiceFlow should always get right.") {
-                    HStack(spacing: 8) {
-                        IconButton(symbol: "magnifyingglass", help: "Search") { searching.toggle(); if !searching { query = "" } }
-                        Button("Import") { importFile() }
-                        Button("Add new") { adding = true }.buttonStyle(.borderedProminent)
-                    }
-                }
-                TabStrip(items: DictionaryTab.allCases, title: \.title, selection: $tab)
-                if searching {
-                    TextField("Search words and corrections", text: $query).textFieldStyle(.roundedBorder)
-                }
-                if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
-
-                if entries.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "character.book.closed").font(.system(size: 28)).foregroundStyle(.secondary)
-                        Text(query.isEmpty ? "No words yet. Add names and terms you use, or correct a dictation and VoiceFlow learns it."
-                                           : "No matches.")
-                            .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity).padding(.vertical, 40)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(entries) { entry in
-                            DictionaryRow(entry: entry, onEdit: { editing = entry }, onDelete: { deleting = entry })
-                            if entry.id != entries.last?.id { Divider() }
-                        }
-                    }
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.03)))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.07)))
+        Page(spacing: Spacing.md) {
+            PageHeader(title: "Dictionary", subtitle: "Names, jargon and spellings VoiceFlow should always get right.") {
+                HStack(spacing: Spacing.xs) {
+                    Button("Import") { importFile() }.buttonStyle(.vfSecondary)
+                    Button { adding = true } label: { Label("Add word", systemImage: "plus") }.buttonStyle(.vfPrimary)
                 }
             }
-            .padding(28)
-            .frame(maxWidth: 820, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            HStack(spacing: Spacing.md) {
+                TabStrip(items: DictionaryTab.allCases, title: \.title, selection: $tab)
+                Spacer(minLength: Spacing.md)
+                SearchField(prompt: "Search words", text: $query).frame(maxWidth: 240)
+            }
+            if let notice { Text(notice).font(TypeScale.callout).foregroundStyle(Palette.muted) }
+
+            if entries.isEmpty {
+                EmptyState(symbol: "book",
+                           text: query.isEmpty ? "No words yet. Add names and terms you use, or correct a dictation and VoiceFlow learns it."
+                                               : "No words match “\(query)”.")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(entries) { entry in
+                        DictionaryRow(entry: entry, onEdit: { editing = entry }, onDelete: { deleting = entry })
+                        if entry.id != entries.last?.id { RowDivider() }
+                    }
+                }
+                .rowGroupSurface()
+            }
         }
         .sheet(isPresented: $adding) { DictionaryEditor(model: model, entry: nil) }
         .sheet(item: $editing) { DictionaryEditor(model: model, entry: $0) }
@@ -105,24 +94,21 @@ private struct DictionaryRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Spacing.sm) {
             if let wrong = entry.misspelling {
-                Text(wrong).foregroundStyle(.secondary).strikethrough()
-                Image(systemName: "arrow.right").font(.caption).foregroundStyle(.secondary)
+                Text(wrong).font(TypeScale.body).foregroundStyle(Palette.muted).strikethrough().lineLimit(1)
+                Image(systemName: "arrow.right").font(.system(size: 11)).foregroundStyle(Palette.subtle).accessibilityLabel("corrects to")
             }
-            Text(entry.term).font(.body.weight(.medium))
-            if entry.source == .autoLearned {
-                Text("Learned").font(.caption).padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-            }
-            Spacer()
-            HStack(spacing: 2) {
+            Text(entry.term).font(TypeScale.bodyMedium).foregroundStyle(Palette.foreground).lineLimit(1)
+            if entry.source == .autoLearned { Badge(text: "Learned") }
+            Spacer(minLength: Spacing.xs)
+            HoverActions(visible: hovering) {
                 IconButton(symbol: "pencil", help: "Edit", action: onEdit)
                 IconButton(symbol: "trash", help: "Delete", action: onDelete)
             }
-            .opacity(hovering ? 1 : 0)
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
+        .padding(.horizontal, Spacing.md).frame(minHeight: 44)
+        .background(hovering ? Palette.hover : Color.clear)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
@@ -138,25 +124,25 @@ private struct DictionaryEditor: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Spacing.md) {
             Text(entry == nil ? "Add to dictionary" : (entry?.misspelling == nil ? "Edit word" : "Edit replacement"))
-                .font(.title2.bold())
-            Toggle("Correct a misspelling", isOn: $correcting)
+                .font(TypeScale.sectionTitle).foregroundStyle(Palette.foreground)
+            Toggle("Correct a misspelling", isOn: $correcting).toggleStyle(VFCheckboxStyle())
             if correcting {
-                TextField("Misspelling (what VoiceFlow types now)", text: $misspelling).textFieldStyle(.roundedBorder)
+                InputField(prompt: "Misspelling (what VoiceFlow types now)", text: $misspelling)
             }
-            TextField(correcting ? "Correct spelling" : "Word or phrase", text: $term).textFieldStyle(.roundedBorder)
-                .onSubmit(save)
-            if let error { Text(error).foregroundStyle(.red).font(.callout) }
-            HStack {
+            InputField(prompt: correcting ? "Correct spelling" : "Word or phrase", text: $term, onSubmit: save)
+            if let error { AttentionLine(text: error) }
+            HStack(spacing: Spacing.xs) {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.vfSecondary)
                 Button(entry == nil ? "Add word" : "Save changes", action: save)
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction).buttonStyle(.vfPrimary)
             }
         }
-        .padding(24)
+        .padding(Spacing.lg)
         .frame(width: 420)
+        .background(Palette.window)
         .onAppear {
             term = entry?.term ?? ""
             misspelling = entry?.misspelling ?? ""
