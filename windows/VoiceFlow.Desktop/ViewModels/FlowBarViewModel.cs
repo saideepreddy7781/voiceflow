@@ -30,6 +30,7 @@ public sealed partial class FlowBarViewModel : ObservableObject
     public IReadOnlyList<float> Levels => _dictation.Levels;
 
     public bool ShowPill => Phase != FlowPhase.Idle;
+    public bool ShowIdlePill => Phase == FlowPhase.Idle && _dictation.MeetingSince == null && _dictation.ShowWhenIdle;
     public bool ShowHandsFree => Phase is FlowPhase.HandsFree or FlowPhase.Command;
     public bool IsCommand => Phase == FlowPhase.Command;
     public bool Frozen => Phase == FlowPhase.Processing;
@@ -47,6 +48,7 @@ public sealed partial class FlowBarViewModel : ObservableObject
 
     void Refresh() => OnPropertyChanged(string.Empty);
 
+    [RelayCommand] void StartHandsFree() => _dictation.StartHandsFree();
     [RelayCommand] void Cancel() => _dictation.Cancel();
     [RelayCommand] void Confirm() => _dictation.Confirm();
     [RelayCommand] void StopMeeting() => _dictation.StopMeeting();

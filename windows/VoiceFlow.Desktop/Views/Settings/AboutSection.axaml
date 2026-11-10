@@ -15,9 +15,16 @@
         </StackPanel>
         <StackPanel Grid.Column="2" Spacing="8" VerticalAlignment="Center">
           <Button Content="Check for updates" Command="{Binding CheckUpdatesCommand}"/>
-          <Button Classes="primary" Content="Install update" Command="{Binding InstallCommand}" IsVisible="{Binding UpdateAvailable}"/>
+          <Button Classes="primary" Content="View release" Command="{Binding ViewReleaseCommand}" IsVisible="{Binding UpdateAvailable}"/>
         </StackPanel>
       </Grid>
+    </Border>
+    <Border Classes="card" Padding="20,4">
+      <StackPanel Classes="rows">
+        <c:SettingRow Title="Check for updates automatically" Description="Asks GitHub for the latest version at launch and once a day. Nothing is downloaded.">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding CheckForUpdates}"/>
+        </c:SettingRow>
+      </StackPanel>
     </Border>
     <TextBlock Classes="callout muted wrap" Text="Free and open source under the MIT License. Speech and cleanup run on your own Groq key."/>
     <Button Classes="link" Command="{Binding OpenRepoCommand}" HorizontalAlignment="Left">

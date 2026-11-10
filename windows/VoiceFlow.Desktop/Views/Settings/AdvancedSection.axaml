@@ -12,6 +12,9 @@
           <c:SettingRow Title="Command Mode" Description="Hold the Command Mode keys and tell VoiceFlow how to edit the selected text.">
             <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding CommandMode}"/>
           </c:SettingRow>
+          <c:SettingRow Title="Learn words from my corrections" Description="When you fix a dictated word right away, it is added to your dictionary.">
+            <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding AutoLearn}"/>
+          </c:SettingRow>
           <c:SettingRow Title="Whisper mode" Description="Picks up quiet speech.">
             <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding WhisperMode}"/>
           </c:SettingRow>

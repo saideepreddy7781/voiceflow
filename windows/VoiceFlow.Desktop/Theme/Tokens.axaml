@@ -71,9 +71,9 @@
     </ResourceDictionary>
   </ResourceDictionary.ThemeDictionaries>
 
-  <!-- Fonts. Segoe UI Variable picks optical sizes per family name; the rest are fallbacks on older Windows and macOS. -->
-  <FontFamily x:Key="FontText">Segoe UI Variable Text, Segoe UI, Helvetica Neue, Arial</FontFamily>
-  <FontFamily x:Key="FontDisplay">Segoe UI Variable Display, Segoe UI, Helvetica Neue, Arial</FontFamily>
+  <!-- Fonts. Segoe UI Variable picks optical sizes per family name. Nirmala UI carries Telugu and Devanagari; the rest are fallbacks on older Windows and macOS. -->
+  <FontFamily x:Key="FontText">Segoe UI Variable Text, Segoe UI, Nirmala UI, Helvetica Neue, Arial</FontFamily>
+  <FontFamily x:Key="FontDisplay">Segoe UI Variable Display, Segoe UI, Nirmala UI, Helvetica Neue, Arial</FontFamily>
   <FontFamily x:Key="FontMono">Cascadia Mono, Cascadia Code, Consolas, Menlo, monospace</FontFamily>
 
   <!-- 8 px rhythm. 12 is the one half step, used inside controls. -->

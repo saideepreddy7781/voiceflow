@@ -1,16 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!-- The Avalonia UI, as a library that VoiceFlow.Windows hosts. It has no Windows-only code, so it builds and renders anywhere. -->
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Library</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>VoiceFlow.Desktop</RootNamespace>
     <AssemblyName>VoiceFlow.Desktop</AssemblyName>
-    <ApplicationIcon>Assets\VoiceFlow.ico</ApplicationIcon>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <AssemblyTitle>VoiceFlow</AssemblyTitle>
     <Description>Voice dictation for Windows: hold a hotkey, speak, and clean text is typed where you are.</Description>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
     <!-- All MIT licensed. Versions are pinned; bump them together. -->
@@ -26,10 +24,4 @@
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
   <Import Project="..\VoiceFlow.Desktop\MSBuild\NoAvaloniaGenerators.targets" />
-  <!-- SkiaSharp and HarfBuzz ship 100 MB of native .pdb files next to their DLLs; managed symbols are embedded already. -->
-  <Target Name="DropNativeSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
-    <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
-    </ItemGroup>
-  </Target>
 </Project>

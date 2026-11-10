@@ -112,6 +112,8 @@ public sealed class Preferences : IEquatable<Preferences>
     public TeluguScript TeluguScript { get; set; } = TeluguScript.Mixed;
     public CleanupLevel CleanupLevel { get; set; } = CleanupLevel.Light;
     public bool CommandModeEnabled { get; set; } = true;
+    /// <summary>Adds a word to the dictionary when you correct it right after dictating.</summary>
+    public bool AutoLearnWords { get; set; } = true;
     public Dictionary<StyleCategory, WritingStyle> Styles { get; set; } = [];
 
     // Audio
@@ -123,6 +125,8 @@ public sealed class Preferences : IEquatable<Preferences>
     public bool PlaySounds { get; set; } = true;
 
     // Notetaker
+    /// <summary>Offers Notetaker when a call starts. It never starts recording on its own.</summary>
+    public bool MeetingsDetect { get; set; } = true;
     public bool MeetingsSystemAudio { get; set; } = true;
     /// <summary>Folder where each meeting's notes are saved as Markdown. Empty: don't save.</summary>
     public string MeetingsFolder { get; set; } = "";
@@ -134,6 +138,8 @@ public sealed class Preferences : IEquatable<Preferences>
     /// <summary>0 keeps no history; -1 keeps it forever.</summary>
     public int HistoryRetentionDays { get; set; } = 30;
     public bool LaunchAtLogin { get; set; }
+    /// <summary>Asks GitHub for the latest release at launch and once a day. Nothing is downloaded.</summary>
+    public bool CheckForUpdates { get; set; } = true;
     public bool DebugLogging { get; set; }
     public bool Onboarded { get; set; }
 
@@ -179,11 +185,13 @@ public sealed class Preferences : IEquatable<Preferences>
             ["teluguScript"] = EnumText.Raw(TeluguScript),
             ["cleanupLevel"] = EnumText.Raw(CleanupLevel),
             ["commandModeEnabled"] = CommandModeEnabled,
+            ["autoLearnWords"] = AutoLearnWords,
             ["styles"] = styles,
             ["inputDeviceId"] = InputDeviceId,
             ["whisperMode"] = WhisperMode,
             ["muteAudioWhileDictating"] = MuteAudioWhileDictating,
             ["playSounds"] = PlaySounds,
+            ["meetingsDetect"] = MeetingsDetect,
             ["meetingsSystemAudio"] = MeetingsSystemAudio,
             ["meetingsFolder"] = MeetingsFolder,
             ["meetingsNotesLanguage"] = EnumText.Raw(MeetingsNotesLanguage),
@@ -191,6 +199,7 @@ public sealed class Preferences : IEquatable<Preferences>
             ["showBarWhenIdle"] = ShowBarWhenIdle,
             ["historyRetentionDays"] = HistoryRetentionDays,
             ["launchAtLogin"] = LaunchAtLogin,
+            ["checkForUpdates"] = CheckForUpdates,
             ["debugLogging"] = DebugLogging,
             ["onboarded"] = Onboarded,
         };
@@ -238,6 +247,7 @@ public sealed class Preferences : IEquatable<Preferences>
         if (EnumText.TryParse<CleanupLevel>(Str(o, "cleanupLevel"), out var level)) p.CleanupLevel = level;
         else if (Bool(o, "cleanupEnabled") == false) p.CleanupLevel = CleanupLevel.None;
         p.CommandModeEnabled = Bool(o, "commandModeEnabled") ?? p.CommandModeEnabled;
+        p.AutoLearnWords = Bool(o, "autoLearnWords") ?? p.AutoLearnWords;
         if (o["styles"] is JsonObject styles)
         {
             foreach (var (k, v) in styles)
@@ -251,6 +261,7 @@ public sealed class Preferences : IEquatable<Preferences>
         p.WhisperMode = Bool(o, "whisperMode") ?? p.WhisperMode;
         p.MuteAudioWhileDictating = Bool(o, "muteAudioWhileDictating") ?? p.MuteAudioWhileDictating;
         p.PlaySounds = Bool(o, "playSounds") ?? p.PlaySounds;
+        p.MeetingsDetect = Bool(o, "meetingsDetect") ?? p.MeetingsDetect;
         p.MeetingsSystemAudio = Bool(o, "meetingsSystemAudio") ?? p.MeetingsSystemAudio;
         p.MeetingsFolder = Str(o, "meetingsFolder") ?? p.MeetingsFolder;
         E<NotesLanguage>("meetingsNotesLanguage", v => p.MeetingsNotesLanguage = v);
@@ -258,6 +269,7 @@ public sealed class Preferences : IEquatable<Preferences>
         p.ShowBarWhenIdle = Bool(o, "showBarWhenIdle") ?? p.ShowBarWhenIdle;
         p.HistoryRetentionDays = Int(o, "historyRetentionDays") ?? p.HistoryRetentionDays;
         p.LaunchAtLogin = Bool(o, "launchAtLogin") ?? p.LaunchAtLogin;
+        p.CheckForUpdates = Bool(o, "checkForUpdates") ?? p.CheckForUpdates;
         p.DebugLogging = Bool(o, "debugLogging") ?? p.DebugLogging;
         p.Onboarded = Bool(o, "onboarded") ?? p.Onboarded;
         return p;

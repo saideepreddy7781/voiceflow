@@ -16,7 +16,7 @@ public enum HookVerdict
     SwallowAndReleaseWithMask,
 }
 
-public enum HotkeyShortcut { PasteLast }
+public enum HotkeyShortcut { PasteLast, Scratchpad }
 
 public sealed record HookResult(HookVerdict Verdict, IReadOnlyList<GestureAction> Actions, HotkeyShortcut? Shortcut = null)
 {
@@ -29,12 +29,14 @@ public sealed record HookResult(HookVerdict Verdict, IReadOnlyList<GestureAction
 /// no I/O and allocates little; the Windows layer posts the resulting actions to the UI loop.
 ///
 /// Hotkeys: Ctrl+Win (default), Right Alt, Right Ctrl. Command Mode adds Alt (Shift with Right Alt).
-/// Alt+Shift+V pastes the last result.
+/// Alt+Shift+V pastes the last result and Alt+Shift+S opens the Scratchpad. Alt alone is avoided because it drives
+/// app menus (Alt+S is "Send" or a menu in many apps); Alt+Shift is free in most apps, and the release is masked so
+/// Windows does not switch the input language.
 /// </summary>
 public sealed class HotkeyProcessor
 {
     public const int VK_BACK = 0x08, VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12, VK_ESCAPE = 0x1B, VK_SPACE = 0x20,
-        VK_V = 0x56, VK_LWIN = 0x5B, VK_RWIN = 0x5C, VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_LCONTROL = 0xA2,
+        VK_S = 0x53, VK_V = 0x56, VK_LWIN = 0x5B, VK_RWIN = 0x5C, VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_LCONTROL = 0xA2,
         VK_RCONTROL = 0xA3, VK_LMENU = 0xA4, VK_RMENU = 0xA5;
 
     /// <summary>An unassigned virtual key, injected so Windows sees "another key" between Win down and up.</summary>
@@ -125,10 +127,10 @@ public sealed class HotkeyProcessor
         if (!_recognizer.IsActive && !_chordActive)
         {
             // Plain typing costs nothing; only the shortcut is checked.
-            if (vk == VK_V && AnyDown(IsAlt) && AnyDown(IsShift) && !AnyDown(IsCtrl) && !AnyDown(IsWin))
+            if (vk is VK_V or VK_S && AnyDown(IsAlt) && AnyDown(IsShift) && !AnyDown(IsCtrl) && !AnyDown(IsWin))
             {
                 _swallowedDown.Add(vk);
-                return new HookResult(HookVerdict.Swallow, [], HotkeyShortcut.PasteLast);
+                return new HookResult(HookVerdict.Swallow, [], vk == VK_V ? HotkeyShortcut.PasteLast : HotkeyShortcut.Scratchpad);
             }
             return HookResult.PassNothing;
         }

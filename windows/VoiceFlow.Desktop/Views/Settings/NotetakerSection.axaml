@@ -8,6 +8,9 @@
   <StackPanel Spacing="16">
     <Border Classes="card" Padding="20,4">
       <StackPanel Classes="rows">
+        <c:SettingRow Title="Offer to take notes when a call starts" Description="Watches for Zoom, Teams, Meet and Webex. VoiceFlow only asks; it never starts recording on its own.">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding DetectMeetings}"/>
+        </c:SettingRow>
         <c:SettingRow Title="Record the other people (system audio)" Description="Without it, only your microphone is recorded.">
           <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding SystemAudio}"/>
         </c:SettingRow>

@@ -62,23 +62,27 @@ public sealed record HistoryGroup(string Label, IReadOnlyList<HistoryRowViewMode
 public sealed partial class HomeViewModel : ObservableObject
 {
     readonly IAppServices _services;
-    readonly DateTimeOffset _now;
+    readonly Func<DateTimeOffset> _clock;
 
-    public HomeViewModel(IAppServices services, DateTimeOffset now, Action runSetup)
+    public HomeViewModel(IAppServices services, DateTimeOffset now, Action runSetup) : this(services, () => now, runSetup) { }
+
+    public HomeViewModel(IAppServices services, Func<DateTimeOffset> clock, Action runSetup)
     {
         _services = services;
-        _now = now;
+        _clock = clock;
         RunSetupCommand = new RelayCommand(runSetup);
         services.History.Changed += (_, _) => Refresh();
         services.Setup.Changed += (_, _) => RefreshSetup();
         services.Preferences.Changed += (_, _) => OnPropertyChanged(nameof(Hotkey));
+        services.Updates.Changed += (_, _) => RefreshUpdate();
         RefreshSetup();
         Refresh();
+        RefreshUpdate();
     }
 
     public IRelayCommand RunSetupCommand { get; }
 
-    public string Greeting => _now.ToLocalTime().Hour switch
+    public string Greeting => _clock().ToLocalTime().Hour switch
     {
         < 12 => "Good morning",
         < 17 => "Good afternoon",
@@ -99,8 +103,27 @@ public sealed partial class HomeViewModel : ObservableObject
     [ObservableProperty] bool _noHistory;
     [ObservableProperty] bool _noMatches;
     [ObservableProperty] string _searchText = "";
+    [ObservableProperty] bool _hasUpdate;
+    [ObservableProperty] string _updateNotice = "";
 
     partial void OnSearchTextChanged(string value) => RefreshList();
+
+    /// <summary>Called when the window comes back: the day may have changed.</summary>
+    public void Reload()
+    {
+        OnPropertyChanged(nameof(Greeting));
+        RefreshSetup();
+        Refresh();
+    }
+
+    void RefreshUpdate()
+    {
+        HasUpdate = _services.Updates.State == UpdateState.Available;
+        UpdateNotice = HasUpdate ? $"VoiceFlow {_services.Updates.AvailableVersion} is available." : "";
+    }
+
+    [RelayCommand]
+    void OpenUpdate() => _services.Updates.OpenRelease();
 
     void RefreshSetup()
     {
@@ -111,7 +134,8 @@ public sealed partial class HomeViewModel : ObservableObject
 
     void Refresh()
     {
-        var today = _now.Date;
+        var now = _clock();
+        var today = now.Date;
         var entries = _services.History.Entries;
         var todayEntries = entries.Where(e => e.Date.Date == today && e.Outcome != "failed").ToList();
         var words = todayEntries.Sum(e => e.WordCount);
@@ -121,7 +145,7 @@ public sealed partial class HomeViewModel : ObservableObject
         // Typing averages about 40 words a minute (the figure the Insights page uses).
         var saved = Math.Max(0, words / 40.0 - seconds / 60);
         TimeSavedToday = words == 0 ? "0 min" : saved < 1 ? "<1 min" : $"{Math.Round(saved)} min";
-        WordsThisWeek = UsageStats.Compute(entries, _now).WordsThisWeek.ToString("N0", CultureInfo.CurrentCulture);
+        WordsThisWeek = UsageStats.Compute(entries, now).WordsThisWeek.ToString("N0", CultureInfo.CurrentCulture);
         NoHistory = entries.Count == 0;
         RefreshList();
     }
@@ -134,7 +158,7 @@ public sealed partial class HomeViewModel : ObservableObject
             || e.Raw.Contains(query, StringComparison.CurrentCultureIgnoreCase)
             || e.AppName.Contains(query, StringComparison.CurrentCultureIgnoreCase));
         Groups.Clear();
-        foreach (var group in GroupByDay(filtered, _now, this))
+        foreach (var group in GroupByDay(filtered, _clock(), this))
             Groups.Add(group);
         NoMatches = Groups.Count == 0 && !NoHistory;
     }

@@ -4,8 +4,7 @@ using VoiceFlow.Core.Meetings;
 
 namespace VoiceFlow.Desktop.Services;
 
-// Everything the real app provides lives in this folder. Integration implements these interfaces and
-// passes the result to App.Services before the desktop lifetime starts.
+// Everything the real app provides lives behind these interfaces. VoiceFlow.Windows implements them.
 //
 // Events and level pushes may arrive on any thread; implementations must raise them on the UI thread
 // (Avalonia.Threading.Dispatcher.UIThread.Post).
@@ -138,6 +137,8 @@ public interface IMicrophoneService
     /// <summary>Latest test level, 0 to 1.</summary>
     double TestLevel { get; }
     event EventHandler? TestLevelChanged;
+    /// <summary>Lists the microphones again (a headset may have been plugged in).</summary>
+    void RefreshDevices();
     void StartTest(string deviceId);
     void StopTest();
 }
@@ -168,9 +169,12 @@ public interface IDictationService
     FlowToast? Toast { get; }
     /// <summary>Set while Notetaker records: the bar shows the recording chip.</summary>
     DateTimeOffset? MeetingSince { get; }
+    /// <summary>The setting that keeps a resting bar on screen. Off unless the user turns it on.</summary>
+    bool ShowWhenIdle { get; }
     event EventHandler? Changed;
     /// <summary>Raised on every level update; do not route through Changed.</summary>
     event EventHandler? LevelsChanged;
+    void StartHandsFree();
     void Cancel();
     void Confirm();
     void StopMeeting();
@@ -197,7 +201,8 @@ public interface IUpdateService
     string? AvailableVersion { get; }
     event EventHandler? Changed;
     Task CheckAsync();
-    Task InstallAsync();
+    /// <summary>Opens the release page. VoiceFlow never downloads an update by itself.</summary>
+    void OpenRelease();
 }
 
 /// <summary>Builds the debug report. It must never contain anything the user said or typed.</summary>

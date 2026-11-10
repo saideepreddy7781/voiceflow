@@ -7,12 +7,13 @@ public sealed partial class ShellViewModel : ObservableObject
 {
     readonly Dictionary<Page, object> _pages = [];
     readonly IAppServices _services;
+    readonly Func<DateTimeOffset> _clock;
     bool _selecting;
 
     public ShellViewModel(IAppServices services, DateTimeOffset? now = null)
     {
         _services = services;
-        Now = now ?? DateTimeOffset.Now;
+        _clock = now is { } fixedNow ? () => fixedNow : () => DateTimeOffset.Now;
         TopItems =
         [
             new NavItem(Page.Home, "Home", "IconHome", OnSelected),
@@ -31,7 +32,7 @@ public sealed partial class ShellViewModel : ObservableObject
         Navigate(Page.Home);
     }
 
-    public DateTimeOffset Now { get; }
+    public DateTimeOffset Now => _clock();
     public IReadOnlyList<NavItem> TopItems { get; }
     public IReadOnlyList<NavItem> BottomItems { get; }
     public IEnumerable<NavItem> AllItems => TopItems.Concat(BottomItems);
@@ -54,9 +55,9 @@ public sealed partial class ShellViewModel : ObservableObject
         {
             vm = page switch
             {
-                Page.Home => new HomeViewModel(_services, Now, RunSetup),
+                Page.Home => new HomeViewModel(_services, _clock, RunSetup),
                 Page.Meetings => new MeetingsViewModel(_services, ShowDialog),
-                Page.Insights => new InsightsViewModel(_services, Now),
+                Page.Insights => new InsightsViewModel(_services, _clock),
                 Page.Dictionary => new DictionaryViewModel(_services, ShowDialog),
                 Page.Snippets => new SnippetsViewModel(_services, ShowDialog),
                 Page.Style => new StyleViewModel(_services),
@@ -83,7 +84,15 @@ public sealed partial class ShellViewModel : ObservableObject
         foreach (var other in AllItems)
             if (other != item) other.IsSelected = false;
         _selecting = false;
+        if (item.Page == Page.Settings) Settings.General.RefreshDevices();
         Current = Page_(item.Page);
+    }
+
+    /// <summary>Called when the window comes to the front: the day may have changed since the pages last updated.</summary>
+    public void Refresh()
+    {
+        if (_pages.TryGetValue(Page.Home, out var home)) ((HomeViewModel)home).Reload();
+        if (_pages.TryGetValue(Page.Insights, out var insights)) ((InsightsViewModel)insights).Reload();
     }
 
     /// <summary>Set by the app to open the onboarding window.</summary>

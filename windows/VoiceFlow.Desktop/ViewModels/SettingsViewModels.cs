@@ -134,7 +134,6 @@ public sealed partial class GeneralSettings : ObservableObject
     public GeneralSettings(IAppServices services)
     {
         _services = services;
-        Devices = services.Microphone.Devices;
         HotkeyChoices = Enum.GetValues<Hotkey>().Select(h => new Choice<Hotkey>(HotkeyInfo.DisplayName(h), h)).ToList();
         CleanupChoices = Enum.GetValues<CleanupLevel>().Select(l => new Choice<CleanupLevel>(EnumText.DisplayName(l), l)).ToList();
         var chosen = Prefs.Languages;
@@ -153,7 +152,7 @@ public sealed partial class GeneralSettings : ObservableObject
 
     Preferences Prefs => _services.Preferences.Current;
 
-    public IReadOnlyList<MicrophoneDevice> Devices { get; }
+    public IReadOnlyList<MicrophoneDevice> Devices => _services.Microphone.Devices;
     public IReadOnlyList<Choice<Hotkey>> HotkeyChoices { get; }
     public IReadOnlyList<Choice<CleanupLevel>> CleanupChoices { get; }
     public IReadOnlyList<TeluguScriptOption> ScriptOptions { get; }
@@ -185,6 +184,14 @@ public sealed partial class GeneralSettings : ObservableObject
         set { _services.Preferences.Update(p => p.Hotkey = value.Value); OnPropertyChanged(); OnPropertyChanged(nameof(Shortcuts)); }
     }
 
+    /// <summary>Lists the microphones again; called when Settings opens.</summary>
+    public void RefreshDevices()
+    {
+        _services.Microphone.RefreshDevices();
+        OnPropertyChanged(nameof(Devices));
+        OnPropertyChanged(nameof(SelectedDevice));
+    }
+
     public IEnumerable<ShortcutRow> Shortcuts
     {
         get
@@ -193,6 +200,7 @@ public sealed partial class GeneralSettings : ObservableObject
             yield return new ShortcutRow("Hands-free", HotkeyInfo.HandsFree(Prefs.Hotkey), "Double-tap");
             yield return new ShortcutRow("Command Mode", $"{key} + {HotkeyInfo.CommandModifier(Prefs.Hotkey)}");
             yield return new ShortcutRow("Paste last transcript", "Alt + Shift + V");
+            yield return new ShortcutRow("Scratchpad", "Alt + Shift + S");
             yield return new ShortcutRow("Cancel", "Esc");
         }
     }
@@ -245,6 +253,12 @@ public sealed partial class NotetakerSettings : ObservableObject
     Preferences Prefs => _services.Preferences.Current;
 
     public IReadOnlyList<Choice<NotesLanguage>> LanguageChoices { get; }
+
+    public bool DetectMeetings
+    {
+        get => Prefs.MeetingsDetect;
+        set { _services.Preferences.Update(p => p.MeetingsDetect = value); OnPropertyChanged(); }
+    }
 
     public bool SystemAudio
     {
@@ -474,6 +488,12 @@ public sealed partial class AdvancedSettings : ObservableObject
         set { _services.Preferences.Update(p => p.CommandModeEnabled = value); OnPropertyChanged(); }
     }
 
+    public bool AutoLearn
+    {
+        get => Prefs.AutoLearnWords;
+        set { _services.Preferences.Update(p => p.AutoLearnWords = value); OnPropertyChanged(); }
+    }
+
     public bool WhisperMode
     {
         get => Prefs.WhisperMode;
@@ -509,7 +529,11 @@ public sealed partial class AboutSettings : ObservableObject
     public AboutSettings(IAppServices services)
     {
         _services = services;
-        services.Updates.Changed += (_, _) => OnPropertyChanged(nameof(UpdateText));
+        services.Updates.Changed += (_, _) =>
+        {
+            OnPropertyChanged(nameof(UpdateText));
+            OnPropertyChanged(nameof(UpdateAvailable));
+        };
     }
 
     public string Version => $"Version {_services.Updates.CurrentVersion}";
@@ -520,8 +544,14 @@ public sealed partial class AboutSettings : ObservableObject
         UpdateState.UpToDate => "You have the latest version.",
         UpdateState.Available => $"Version {_services.Updates.AvailableVersion} is available.",
         UpdateState.Failed => "Could not check for updates.",
-        _ => "Updates are checked at launch.",
+        _ => CheckForUpdates ? "Checked at launch and once a day." : "Automatic checks are off.",
     };
+
+    public bool CheckForUpdates
+    {
+        get => _services.Preferences.Current.CheckForUpdates;
+        set { _services.Preferences.Update(p => p.CheckForUpdates = value); OnPropertyChanged(); OnPropertyChanged(nameof(UpdateText)); }
+    }
 
     public bool UpdateAvailable => _services.Updates.State == UpdateState.Available;
 
@@ -529,7 +559,7 @@ public sealed partial class AboutSettings : ObservableObject
     Task CheckUpdates() => _services.Updates.CheckAsync();
 
     [RelayCommand]
-    Task Install() => _services.Updates.InstallAsync();
+    void ViewRelease() => _services.Updates.OpenRelease();
 
     [RelayCommand]
     void OpenRepo() => _services.Shell.OpenUrl("https://github.com/saideepreddy7781/voiceflow");

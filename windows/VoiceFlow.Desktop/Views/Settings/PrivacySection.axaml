@@ -27,7 +27,10 @@
     <StackPanel Spacing="8">
       <TextBlock Text="What leaves this PC" Classes="h3"/>
       <Border Classes="card" Padding="20">
+        <StackPanel>
         <TextBlock Classes="callout muted wrap" Text="VoiceFlow sends audio while you dictate, your transcript, the app's name and the short text around your cursor to Groq, using your key. Nothing from password fields or password managers. VoiceFlow never stores audio."/>
+        <TextBlock Classes="callout muted wrap" Margin="0,8,0,0" Text="Update checks ask GitHub for the latest release version, at launch and once a day. GitHub sees your IP address and nothing about what you dictate. Turn them off in Settings, About."/>
+        </StackPanel>
       </Border>
     </StackPanel>
 

@@ -80,6 +80,7 @@ static class ScreenRunner
                 new SetupProblem("Microphone blocked.", "Allow microphone access in Windows Settings."));
             s.Navigate(Page.Home);
         });
+        Capture("home-update", (s, d) => { d.DemoUpdates.SetAvailable("0.2.0"); s.Navigate(Page.Home); });
         Capture("home-empty", (s, _) => { s.Navigate(Page.Home); s.Home.SearchText = "zzzz no matches"; });
         Capture("meetings", (s, _) => s.Navigate(Page.Meetings));
         Capture("meetings-transcript", (s, _) => { s.Navigate(Page.Meetings); ((MeetingDetailViewModel)s.Meetings.Pane!).ShowTranscript = true; });
@@ -166,6 +167,7 @@ static class ScreenRunner
             ("Processing", d => d.Set(FlowPhase.Processing, bars)),
             ("Toast while listening", d => d.Set(FlowPhase.Listening, bars, new FlowToast("Pasted into Notepad", "Copied to the clipboard too.", "Undo", () => { }))),
             ("Meeting chip", d => d.Set(FlowPhase.Idle, null, null, DateTimeOffset.Now.AddMinutes(-12))),
+            ("Resting bar", d => d.ShowWhenIdle = true),
         };
         var stack = new WrapPanel { Margin = new Thickness(32), Orientation = Avalonia.Layout.Orientation.Horizontal };
         foreach (var (name, set) in states)

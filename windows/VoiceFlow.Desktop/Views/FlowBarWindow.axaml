@@ -10,6 +10,6 @@
         TransparencyLevelHint="Transparent"
         Topmost="True" ShowInTaskbar="False" CanResize="False" ShowActivated="False"
         SizeToContent="WidthAndHeight">
-  <!-- Non-activation (WS_EX_NOACTIVATE) and click-through hit testing are applied at integration. -->
+  <!-- VoiceFlow.Windows applies WS_EX_NOACTIVATE and click-through on the native handle. -->
   <v:FlowBarView Padding="8,16,8,8"/>
 </Window>

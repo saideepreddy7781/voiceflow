@@ -24,6 +24,9 @@
           <c:SettingRow Title="Paste last transcript">
             <Border Classes="keycap"><TextBlock Text="Alt + Shift + V"/></Border>
           </c:SettingRow>
+          <c:SettingRow Title="Scratchpad">
+            <Border Classes="keycap"><TextBlock Text="Alt + Shift + S"/></Border>
+          </c:SettingRow>
           <c:SettingRow Title="Cancel">
             <Border Classes="keycap"><TextBlock Text="Esc"/></Border>
           </c:SettingRow>

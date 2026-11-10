@@ -43,7 +43,8 @@ public sealed class DemoServices : IAppServices
     public IKeyService Keys { get; } = new DemoKeys();
     public IDictationService Dictation { get; } = new DemoDictation();
     public IShellService Shell { get; } = new DemoShell();
-    public IUpdateService Updates { get; } = new DemoUpdates();
+    public DemoUpdates DemoUpdates { get; } = new();
+    public IUpdateService Updates => DemoUpdates;
     public IDiagnosticsService Diagnostics { get; } = new DemoDiagnostics();
 }
 
@@ -387,6 +388,7 @@ sealed class DemoMicrophone : IMicrophoneService
     public bool IsTesting { get; private set; }
     public double TestLevel { get; private set; }
     public event EventHandler? TestLevelChanged;
+    public void RefreshDevices() { }
 
     public void StartTest(string deviceId)
     {
@@ -424,8 +426,11 @@ public sealed class DemoDictation : IDictationService
     public IReadOnlyList<float> Levels { get; private set; } = [];
     public FlowToast? Toast { get; private set; }
     public DateTimeOffset? MeetingSince { get; private set; }
+    public bool ShowWhenIdle { get; set; }
     public event EventHandler? Changed;
     public event EventHandler? LevelsChanged;
+
+    public void StartHandsFree() => Set(FlowPhase.HandsFree);
 
     public void Set(FlowPhase phase, IReadOnlyList<float>? levels = null, FlowToast? toast = null, DateTimeOffset? meetingSince = null)
     {
@@ -452,12 +457,19 @@ sealed class DemoShell : IShellService
     public Task<string?> PickSaveFileAsync(string suggestedName, string extension) => Task.FromResult<string?>(null);
 }
 
-sealed class DemoUpdates : IUpdateService
+public sealed class DemoUpdates : IUpdateService
 {
     public string CurrentVersion => "0.1.0";
     public UpdateState State { get; private set; } = UpdateState.UpToDate;
-    public string? AvailableVersion => null;
+    public string? AvailableVersion { get; private set; }
     public event EventHandler? Changed;
+
+    public void SetAvailable(string version)
+    {
+        AvailableVersion = version;
+        State = UpdateState.Available;
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
 
     public async Task CheckAsync()
     {
@@ -468,7 +480,7 @@ sealed class DemoUpdates : IUpdateService
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public Task InstallAsync() => Task.CompletedTask;
+    public void OpenRelease() { }
 }
 
 sealed class DemoDiagnostics : IDiagnosticsService

@@ -70,6 +70,28 @@ public static class DictionaryCorrector
     }
 }
 
+/// <summary>Reads word and snippet lists from plain text files.</summary>
+public static class LibraryImport
+{
+    const int MaxItems = 1_000;
+
+    /// <summary>One word per line, or comma-separated.</summary>
+    public static List<string> DictionaryWords(string text) =>
+        text.Split(['\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(MaxItems).ToList();
+
+    /// <summary>"cue&lt;TAB&gt;text" or "cue,text" per line.</summary>
+    public static List<(string Trigger, string Expansion)> Snippets(string text)
+    {
+        var result = new List<(string, string)>();
+        foreach (var line in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Take(MaxItems))
+        {
+            var parts = line.Split(line.Contains('\t') ? '\t' : ',', 2);
+            if (parts.Length == 2) result.Add((parts[0].Trim(), parts[1].Trim()));
+        }
+        return result;
+    }
+}
+
 // MARK: Snippets
 
 public sealed class Snippet
@@ -276,8 +298,7 @@ public static class HistoryRetention
 
 /// <summary>
 /// Learns spellings from your edits: a word you replaced with a similar-looking one that looks like a name
-/// or term becomes a dictionary entry. (The Windows app does not read fields back yet, so this is used
-/// only where the edited text is known.)
+/// or term becomes a dictionary entry. The field is read once more shortly after a dictation.
 /// </summary>
 public static class AutoLearner
 {

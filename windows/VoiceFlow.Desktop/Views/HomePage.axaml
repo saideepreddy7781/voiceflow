@@ -18,6 +18,19 @@
         </WrapPanel>
       </StackPanel>
 
+      <!-- Update notice -->
+      <Border Classes="notice" IsVisible="{Binding HasUpdate}">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Classes="callout wrap" Text="{Binding UpdateNotice}" VerticalAlignment="Center"/>
+          <Button Grid.Column="1" Classes="link" Margin="12,0,0,0" Command="{Binding OpenUpdateCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <TextBlock Text="View release" FontSize="13"/>
+              <PathIcon Data="{StaticResource IconOpen}" Width="12" Height="12"/>
+            </StackPanel>
+          </Button>
+        </Grid>
+      </Border>
+
       <!-- Today's stats -->
       <Grid ColumnDefinitions="*,16,*,16,*">
         <Border Classes="card" Grid.Column="0" Padding="20,16">

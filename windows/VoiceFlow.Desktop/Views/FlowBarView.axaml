@@ -24,6 +24,14 @@
       <Setter Property="Background" Value="#59FFFFFF"/>
       <Setter Property="Foreground" Value="#FFFFFF"/>
     </Style>
+    <Style Selector="Button.barIdle">
+      <Setter Property="Background" Value="#161616"/>
+      <Setter Property="BorderBrush" Value="#29FFFFFF"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="12"/>
+      <Setter Property="Padding" Value="12,4"/>
+      <Setter Property="MinHeight" Value="24"/>
+    </Style>
     <Style Selector="Button.barPrimary">
       <Setter Property="Background" Value="#FFFFFF"/>
       <Setter Property="Foreground" Value="#000000"/>
@@ -31,7 +39,7 @@
   </UserControl.Styles>
   <StackPanel Spacing="6" HorizontalAlignment="Center" VerticalAlignment="Bottom">
     <!-- Toast -->
-    <Border Classes="barFill" CornerRadius="12" MaxWidth="420" Padding="14,9" IsVisible="{Binding ShowToast}" HorizontalAlignment="Center">
+    <Border Classes="barFill barHit" CornerRadius="12" MaxWidth="420" Padding="14,9" IsVisible="{Binding ShowToast}" HorizontalAlignment="Center">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Spacing="2" VerticalAlignment="Center">
           <TextBlock Text="{Binding ToastMessage}" FontSize="12" FontWeight="SemiBold" Foreground="#FFFFFF" TextWrapping="Wrap"/>
@@ -59,6 +67,12 @@
         </Button>
       </StackPanel>
     </Border>
+
+    <!-- Resting pill, only with "Show Flow bar at all times" on. A click starts hands-free dictation. -->
+    <Button Classes="barIdle" Command="{Binding StartHandsFreeCommand}" IsVisible="{Binding ShowIdlePill}" HorizontalAlignment="Center"
+            ToolTip.Tip="Start hands-free dictation" AutomationProperties.Name="Start hands-free dictation">
+      <c:WaveBars Fill="#99FFFFFF" Height="14" BarCount="7" VerticalAlignment="Center"/>
+    </Button>
 
     <!-- Recording chip while Notetaker runs -->
     <Border Classes="barFill" CornerRadius="16" Padding="12,0,4,0" MinHeight="30" HorizontalAlignment="Center" IsVisible="{Binding ShowMeetingChip}"

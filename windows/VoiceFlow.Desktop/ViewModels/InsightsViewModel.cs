@@ -13,18 +13,26 @@ public sealed record CategoryUsage(string Name, int Words, double Share, string 
 public sealed partial class InsightsViewModel : ObservableObject
 {
     readonly IAppServices _services;
-    readonly DateTimeOffset _now;
+    readonly Func<DateTimeOffset> _clock;
 
-    public InsightsViewModel(IAppServices services, DateTimeOffset now)
+    public InsightsViewModel(IAppServices services, DateTimeOffset now) : this(services, () => now) { }
+
+    public InsightsViewModel(IAppServices services, Func<DateTimeOffset> clock)
     {
         _services = services;
-        _now = now;
-        Today = DateOnly.FromDateTime(now.ToLocalTime().DateTime);
+        _clock = clock;
         services.History.Changed += (_, _) => Refresh();
         Refresh();
     }
 
-    public DateOnly Today { get; }
+    public DateOnly Today => DateOnly.FromDateTime(_clock().ToLocalTime().DateTime);
+
+    /// <summary>Called when the window comes back: the day may have changed.</summary>
+    public void Reload()
+    {
+        OnPropertyChanged(nameof(Today));
+        Refresh();
+    }
 
     public ObservableCollection<CategoryUsage> Categories { get; } = [];
 
@@ -45,7 +53,7 @@ public sealed partial class InsightsViewModel : ObservableObject
 
     void Refresh()
     {
-        var s = UsageStats.Compute(_services.History.Entries, _now);
+        var s = UsageStats.Compute(_services.History.Entries, _clock());
         var c = CultureInfo.CurrentCulture;
         WordsPerMinute = s.WordsPerMinute > 0 ? s.WordsPerMinute.ToString("N0", c) : "–";
         Fixes = (s.WordsCorrected + s.DictionaryFixes).ToString("N0", c);

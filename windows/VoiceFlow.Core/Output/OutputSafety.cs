@@ -6,6 +6,17 @@ namespace VoiceFlow.Core.Output;
 /// <summary>Rules that keep dictated or model-generated text from doing more than typing.</summary>
 public static class OutputSafety
 {
+    /// <summary>Adds a space when the cursor sits right after a word. Same rule as macOS.</summary>
+    public static string WithLeadingSpace(string text, string beforeCursor)
+    {
+        if (beforeCursor.Length == 0 || text.Length == 0) return text;
+        var last = beforeCursor[^1];
+        var first = text[0];
+        if (char.IsWhiteSpace(last) || "([{\"'“‘/@#".Contains(last)) return text;
+        if (".,!?;:)]}".Contains(first) || char.IsWhiteSpace(first)) return text;
+        return " " + text;
+    }
+
     /// <summary>
     /// Apps whose content is never read and where VoiceFlow never types: password managers, plus the
     /// Windows credential prompt (CredentialUIBroker) and the sign-in / UAC hosts.

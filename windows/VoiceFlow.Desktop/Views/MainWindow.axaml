@@ -57,7 +57,7 @@
       </Border>
 
       <!-- Page. Row 0 stays clear for the Windows caption buttons. -->
-      <Grid Grid.Column="1" RowDefinitions="32,*">
+      <Grid x:Name="PageArea" Grid.Column="1" RowDefinitions="32,*" Background="{DynamicResource WindowBg}">
         <TransitioningContentControl Grid.Row="1" Content="{Binding Current}" x:Name="PageHost">
           <TransitioningContentControl.PageTransition>
             <c:FadeRise/>
