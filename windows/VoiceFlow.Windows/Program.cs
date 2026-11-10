@@ -18,6 +18,7 @@ internal static class Program
         AppBuilder.Configure<App>()
             .UseWin32()
             .UseSkia()
+            .UseHarfBuzz()
             .With(new FontManagerOptions { FontFallbacks = [new FontFallback { FontFamily = new FontFamily("Nirmala UI") }] })
             .LogToTrace();
 

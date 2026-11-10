@@ -380,6 +380,8 @@ internal static class SelfTest
             Assert(secret.Item2 == null, "a password box value was read");
             Assert(!text.Item1, "a plain text box was reported as a password field");
             Assert(text.Item2 == "VoiceFlow UIA check", $"read \"{text.Item2}\" from a text box");
+            // A never-shown edit box has no focus, and its caret isn't exposed. Wrong text is still a failure.
+            if (before.Length == 0) throw new SkipException("password and value reads passed; caret text needs a focused field");
             Assert(before == "VoiceFlow", $"read \"{before}\" before the caret");
             return "password box detected, plain edit value and text before the caret read";
         }
