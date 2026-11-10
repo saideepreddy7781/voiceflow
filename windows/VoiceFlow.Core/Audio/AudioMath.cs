@@ -113,6 +113,47 @@ public static class AudioMath
         var db = Dbfs(Rms(samples));
         return Math.Clamp((db + 55) / 45, 0, 1);
     }
+
+    /// <summary>
+    /// True when samples are flat: all zero, or a constant value. A quiet room is never this clean, since every
+    /// real microphone has a noise floor. Flat audio means a muted or broken device.
+    /// </summary>
+    public static bool IsDigitalSilence(ReadOnlySpan<float> samples)
+    {
+        if (samples.IsEmpty) return false;
+        float min = samples[0], max = samples[0];
+        foreach (var s in samples)
+        {
+            if (s < min) min = s;
+            if (s > max) max = s;
+        }
+        return max - min <= FlatSignalEpsilon;
+    }
+
+    /// <summary>About -120 dBFS, well under the noise floor of any converter.</summary>
+    const float FlatSignalEpsilon = 1e-6f;
+
+    /// <summary>What a finished dictation's audio says about the microphone.</summary>
+    public static CaptureVerdict Verdict(ReadOnlySpan<float> samples, double heldSeconds)
+    {
+        var seconds = samples.Length / SampleRate;
+        if (seconds < 0.5) return heldSeconds >= 1 ? CaptureVerdict.NoAudio : CaptureVerdict.TooShort;
+        if (seconds >= 1 && IsDigitalSilence(samples)) return CaptureVerdict.DigitalSilence;
+        return IsSilent(samples) ? CaptureVerdict.NoSpeech : CaptureVerdict.Speech;
+    }
+}
+
+public enum CaptureVerdict
+{
+    /// <summary>Released almost immediately.</summary>
+    TooShort,
+    /// <summary>The key was held but almost no audio arrived: the microphone did not deliver.</summary>
+    NoAudio,
+    /// <summary>Flat samples throughout: a muted or disconnected input.</summary>
+    DigitalSilence,
+    /// <summary>A real input, but nobody spoke.</summary>
+    NoSpeech,
+    Speech,
 }
 
 /// <summary>Known Whisper hallucinations on near-silent audio.</summary>

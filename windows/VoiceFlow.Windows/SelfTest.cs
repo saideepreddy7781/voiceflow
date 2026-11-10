@@ -3,10 +3,12 @@ using System.Text;
 using VoiceFlow.Core;
 using VoiceFlow.Core.AI;
 using VoiceFlow.Core.Audio;
+using VoiceFlow.Core.Diagnostics;
 using VoiceFlow.Core.Input;
 using VoiceFlow.Core.Library;
 using VoiceFlow.Core.Speech;
 using VoiceFlow.Windows.Audio;
+using VoiceFlow.Windows.Dictation;
 using VoiceFlow.Windows.Input;
 using VoiceFlow.Windows.Meetings;
 using VoiceFlow.Windows.Native;
@@ -61,6 +63,11 @@ internal static class SelfTest
             Check("hotkey-thread", HotkeyThreadCheck);
             Check("ui-automation", UiAutomationCheck);
             Check("audio-devices", AudioDevicesCheck);
+            Check("shared-capture", SharedCaptureCheck);
+            Check("device-notifications", DeviceNotificationsCheck);
+            Check("real-microphone", RealMicrophoneCheck);
+            Check("field-reading", FieldReadingCheck);
+            Check("debug-report", () => DebugReportCheck(temp));
             Check("ui", () => UiCheck(temp));
         }
         finally
@@ -332,6 +339,111 @@ internal static class SelfTest
         return $"{inputs.Count} microphones, {outputs.Count} output devices";
     }
 
+    /// <summary>The whole shared-capture design on a simulated device: runs with no microphone at all.</summary>
+    static string SharedCaptureCheck()
+    {
+        var now = TimeSpan.FromSeconds(100);
+        var source = new SimulatedMicrophoneSource();
+        using var hub = new SharedMicrophone(source, new SharedMicrophoneOptions { PollInterval = null }, () => now);
+        var frames = new float[800];
+        var voice = Enumerable.Range(0, 800).Select(i => 0.3f * MathF.Sin(i * 0.2f)).ToArray();
+
+        var meeting = hub.Subscribe("meeting");
+        var dictation = hub.Subscribe("dictation");
+        Assert(source.Opened.Count == 1, "a second subscriber opened another device");
+        source.Latest!.Emit(voice);
+        Assert(meeting.SampleCount == voice.Length && dictation.SampleCount == voice.Length, "subscribers did not both get the audio");
+        dictation.Stop();
+        Assert(source.Latest!.Running, "stopping one subscriber stopped the device");
+        source.Latest!.Emit(voice);
+        Assert(meeting.SampleCount == 2 * voice.Length, "the meeting lost audio when dictation stopped");
+
+        source.Latest!.SimulateLoss(new TimeoutException());
+        now += TimeSpan.FromSeconds(1);
+        hub.Poll();
+        Assert(source.Opened.Count == 2, "a lost device was not reopened");
+        source.Latest!.Emit(voice);
+        now += TimeSpan.FromSeconds(1);
+        hub.Poll();
+        Assert(hub.Health.Status == MicHealthStatus.Healthy && hub.Diagnostics.Restarts == 1, $"status {hub.Health.Status}, {hub.Diagnostics.Restarts} restarts");
+
+        source.CurrentId = "mic-2";
+        source.RaiseDevicesChanged();
+        hub.Poll();
+        Assert(source.Opened.Count == 3 && hub.Diagnostics.DeviceSwitches == 1, "a default-device change did not switch");
+
+        for (int i = 0; i < 12; i++)
+        {
+            source.Latest!.Emit(frames);
+            now += TimeSpan.FromSeconds(1);
+            hub.Poll();
+        }
+        Assert(hub.Diagnostics.DeadSignals == 1, "digital silence was not reported as a dead microphone");
+
+        meeting.Dispose();
+        Assert(!source.Latest!.Running && hub.Health.Status == MicHealthStatus.Idle, "the device kept running after the last subscriber left");
+        return "two subscribers, independent stop, loss restart, device switch, dead-signal detection on a simulated device";
+    }
+
+    /// <summary>Windows must accept VoiceFlow's device-change callback, or default-device changes go unnoticed.</summary>
+    static string DeviceNotificationsCheck()
+    {
+        WasapiMicrophoneSource.CheckNotificationInterface();
+        using var source = new WasapiMicrophoneSource();
+        source.EnsureNotifications();
+        if (!source.NotificationsRegistered) throw new SkipException("the audio service refused registration (COM callback interface itself is fine)");
+        return "COM callback built and registered with the audio service";
+    }
+
+    /// <summary>The real WASAPI path, when this machine has a microphone. CI runners don't, so this usually skips.</summary>
+    static string RealMicrophoneCheck()
+    {
+        if (AudioDevices.Inputs().Count == 0) throw new SkipException("no microphone on this machine");
+        using var hub = new SharedMicrophone(new WasapiMicrophoneSource(), new SharedMicrophoneOptions { PollInterval = null });
+        var first = hub.Subscribe("self-test-1");
+        var second = hub.Subscribe("self-test-2");
+        var until = DateTime.UtcNow.AddSeconds(2);
+        while (first.SampleCount == 0 && DateTime.UtcNow < until) Thread.Sleep(20);
+        var name = hub.Health.DeviceName;
+        var samples = first.SampleCount;
+        if (samples == 0) throw new SkipException($"\"{name}\" delivered no audio in 2 s (privacy switch, or nothing plugged in)");
+        first.Dispose();
+        Thread.Sleep(50);
+        var stillRunning = second.SampleCount;
+        Thread.Sleep(300);
+        Assert(second.SampleCount > stillRunning, "the second subscriber stopped receiving when the first left");
+        second.Dispose();
+        return $"\"{name}\": {samples} samples at 16 kHz, one subscriber left and the other kept receiving";
+    }
+
+    /// <summary>Reading the focused element at insertion time, as the paste path does it.</summary>
+    static string FieldReadingCheck()
+    {
+        var reading = Pump(() => FocusInfo.ReadFieldAsync(IntPtr.Zero, readValue: false, timeoutMs: 2000), TimeSpan.FromSeconds(5));
+        return $"focused element read as {reading.State}";
+    }
+
+    /// <summary>The report the bug-report button will use, from the real sources, with leaks attempted.</summary>
+    static string DebugReportCheck(string temp)
+    {
+        const string spoken = "the secret quarterly numbers";
+        var folder = Path.Combine(temp, "report");
+        Directory.CreateDirectory(folder);
+        var model = new AppModel(folder, credentialPrefix: $"VoiceFlow-selftest-{Guid.NewGuid():N}/");
+        var log = AppDiagnostics.LogFor(model);
+        log.Record(new DeliveryLogEntry(DeliverySession.Dictation, DeliveryReason.PastedUnverified, DeliveryDetail.FieldUnreadable, 2000, 800));
+        log.Record(new DeliveryLogEntry(DeliverySession.Dictation, DeliveryReason.Blocked, spoken));
+        var history = new HistoryEntry(HistoryKind.Dictation, "App", spoken, spoken, 1, 1, "pasted");
+        model.Record(history);
+        using var hub = new SharedMicrophone(new SimulatedMicrophoneSource(), new SharedMicrophoneOptions { PollInterval = null });
+        var report = AppDiagnostics.BuildDebugReport(model, hub);
+        foreach (var expected in new[] { "VoiceFlow debug report", "pasted-unverified", "field-unreadable", "Restarts: 0" })
+            Assert(report.Contains(expected, StringComparison.Ordinal), $"missing \"{expected}\"");
+        Assert(!report.Contains(spoken, StringComparison.Ordinal), "the report contained dictated text");
+        Assert(!report.Contains("gsk_", StringComparison.Ordinal), "the report contained a key");
+        return $"{report.Length}-character report with reason codes and no dictated text";
+    }
+
     static string UiCheck(string temp)
     {
         var folder = Path.Combine(temp, "ui");
@@ -345,6 +457,7 @@ internal static class SelfTest
             using var notetaker = new Notetaker(model, bar);
             using var owner = new HiddenOwner();
             var inserter = new Dictation.TextInserter(new ClipboardService(owner.Handle));
+            using var dictation = new Dictation.DictationController(model, bar, inserter, new OutputMuter(folder));
             using var window = new MainWindow(model, notetaker, inserter, null)
             {
                 StartPosition = FormStartPosition.Manual, Location = new Point(-32000, -32000), ShowInTaskbar = false,

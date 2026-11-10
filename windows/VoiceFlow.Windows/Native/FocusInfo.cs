@@ -18,6 +18,9 @@ internal sealed record TypingContext(IntPtr Window, uint ProcessId, string Proce
 
 internal enum FieldState { Normal, Password, Unresponsive, Unknown }
 
+/// <summary>The focused element at one moment. <paramref name="Value"/> is null when the field cannot be read.</summary>
+internal readonly record struct FieldReading(FieldState State, string? Value);
+
 internal static class FocusInfo
 {
     static readonly uint OwnPid = (uint)Environment.ProcessId;
@@ -160,6 +163,31 @@ internal static class FocusInfo
         });
         var finished = await Task.WhenAny(work, Task.Delay(timeoutMs));
         return finished == work ? work.Result : FieldState.Unresponsive;
+    }
+
+    /// <summary>
+    /// The focused element now, for the moment of insertion. Unresponsive means the window is hung. A slow UI
+    /// Automation answer from a window that is still running reads as Unknown, so it doesn't block a paste.
+    /// </summary>
+    /// <param name="expectedWindow">Checked for a hung message loop; zero to skip the check.</param>
+    /// <param name="readValue">False leaves the field's text unread.</param>
+    public static async Task<FieldReading> ReadFieldAsync(IntPtr expectedWindow, bool readValue, int timeoutMs = 400)
+    {
+        if (expectedWindow != IntPtr.Zero && IsHungAppWindow(expectedWindow)) return new FieldReading(FieldState.Unresponsive, null);
+        var work = Task.Run(() =>
+        {
+            try
+            {
+                var (isPassword, value) = UIAutomation.Focused(readValue);
+                return new FieldReading(isPassword ? FieldState.Password : FieldState.Normal, value);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException) { return new FieldReading(FieldState.Unknown, null); }
+        });
+        var finished = await Task.WhenAny(work, Task.Delay(timeoutMs));
+        if (finished == work) return work.Result;
+        // The worker may still be waiting on the app; a late result has nothing to report to.
+        _ = work.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+        return new FieldReading(expectedWindow != IntPtr.Zero && IsHungAppWindow(expectedWindow) ? FieldState.Unresponsive : FieldState.Unknown, null);
     }
 
     /// <summary>The focused field's whole value (Command Mode context), or "" when it cannot be read in time.</summary>

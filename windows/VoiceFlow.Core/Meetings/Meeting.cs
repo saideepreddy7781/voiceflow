@@ -26,6 +26,9 @@ public static class MeetingText
 
 public sealed record TranscriptLine(double Time, Speaker Speaker, string Text);
 
+/// <summary>A stretch of the meeting where your microphone delivered no usable audio.</summary>
+public sealed record MicGap(double Time, double Seconds);
+
 public sealed class ActionItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -87,6 +90,8 @@ public sealed class Meeting
     public string? Error { get; set; }
     /// <summary>True when only the microphone could be recorded.</summary>
     public bool MicOnly { get; set; }
+    /// <summary>Where your voice is missing from the recording because the microphone failed.</summary>
+    public List<MicGap> MicGaps { get; set; } = [];
     /// <summary>The Markdown file last written to the notes folder, so a rename replaces it.</summary>
     public string? SyncedFileName { get; set; }
 
