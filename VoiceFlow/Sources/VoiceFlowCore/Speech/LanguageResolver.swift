@@ -190,7 +190,10 @@ public enum LanguageResolver {
 
     /// Picks between auto-detect and the forced opinions.
     public static func choose(auto: DetailedTranscript, opinions: [LanguageOpinion], plan: LanguagePlan) -> DetailedTranscript {
-        let viable = opinions.filter { !$0.transcript.text.isEmpty && !isLooping($0.transcript) }
+        // A forced opinion that doesn't read as its own language is Whisper guessing, however confident it sounds.
+        let viable = opinions.filter {
+            !$0.transcript.text.isEmpty && !isLooping($0.transcript) && LanguageEvidence.reads(as: $0.language, text: $0.transcript.text) != false
+        }
         let best = viable.max { ($0.transcript.confidence ?? -10) < ($1.transcript.confidence ?? -10) }
         if auto.text.isEmpty { return best?.transcript ?? auto }
         guard let best else { return auto }
@@ -200,7 +203,8 @@ public enum LanguageResolver {
         guard f >= forcedFloor else { return auto }
         switch doubt(about: auto, plan: plan) {
         case nil:
-            if auto.language == best.language { return auto }
+            // Same language, and the forced request had the seeded prompt: its spelling is the better one.
+            if auto.language == best.language { return f >= a ? best.transcript : auto }
             return f > a + margin ? best.transcript : auto
         case .disguised:
             // The words already say auto-detect is wrong; only a much worse forced result keeps it.
@@ -218,10 +222,14 @@ public enum LanguageResolver {
         }
     }
 
+    /// A sticky-language result below this gets the full check. Real Hindi forced to Telugu scored -0.27 to -0.31 in
+    /// testing and correct Telugu -0.05 to -0.12, so someone switching language can't pass as the sticky one.
+    public static let stickyFloor = -0.2
+
     /// Accepts a forced result without a second opinion (used for sticky-language chunks).
     public static func forcedResultAcceptable(_ t: DetailedTranscript) -> Bool {
         guard !t.text.isEmpty, !isLooping(t) else { return false }
-        return (t.confidence ?? 0) >= lowConfidence
+        return (t.confidence ?? 0) >= stickyFloor
     }
 }
 

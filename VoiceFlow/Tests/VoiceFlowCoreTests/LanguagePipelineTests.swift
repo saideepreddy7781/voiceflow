@@ -61,6 +61,20 @@ struct ResolverListTests {
         #expect(out.language == "en")
     }
 
+    @Test func seededSameLanguageResultIsPreferred() {
+        let plan = LanguagePlan(languages: ["en", "hi"])
+        let out = LanguageResolver.choose(auto: t("मैं कल ओफिस आएंगा, मीटिंग 10 बजे है, रिपोर्ट भेज दूगा", "hi", -0.074),
+                                          opinions: [o("hi", "मैं कल office आऊँगा, meeting 10 बजे है, report भेज दूँगा", -0.041)], plan: plan)
+        #expect(out.text.contains("office"))
+    }
+
+    @Test func garbledForcedHindiLosesToAuto() {
+        let plan = LanguagePlan(languages: ["en", "hi"])
+        let junk = "प्यर कलोई स्थर्मल पीसिह सेहिसंग प्रश्चिमी अफरीकी रंदनेविन"
+        let out = LanguageResolver.choose(auto: t(disguised, "en", -0.3), opinions: [o("hi", junk, -0.2)], plan: plan)
+        #expect(out.language == "en")
+    }
+
     @Test func manyLanguagesAreCappedAndRankedByConfusion() {
         let plan = LanguagePlan(languages: ["en", "es", "te", "hi", "ta"])
         let langs = LanguageResolver.opinionLanguages(after: t("नेनु रेपू ओफीस की वस्तानू", "hi", -0.5), plan: plan)
@@ -76,6 +90,12 @@ struct ResolverListTests {
         loop.segments = [seg, seg, seg]
         let out = LanguageResolver.choose(auto: t(disguised, "en", -0.3), opinions: [LanguageOpinion(language: "te", transcript: loop)], plan: plan)
         #expect(out.language == "en")
+    }
+
+    @Test func switchingLanguageFailsTheStickyCheck() {
+        #expect(LanguageResolver.forcedResultAcceptable(t("నేను రేపు వస్తాను", "te", -0.08)))
+        #expect(!LanguageResolver.forcedResultAcceptable(t("మెకల ఉఫిస ఆంగా", "te", -0.31)))
+        #expect(!LanguageResolver.forcedResultAcceptable(t("", "te", -0.01)))
     }
 
     @Test func trackerSticksRechecksAndLetsGo() {

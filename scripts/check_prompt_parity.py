@@ -21,24 +21,25 @@ PAIRS = [
     ("cleanup", SWIFT / "AI" / "CleanupPrompt.swift", CSHARP / "AI" / "CleanupPrompt.cs"),
     ("command mode", SWIFT / "AI" / "CommandMode.swift", CSHARP / "AI" / "CommandMode.cs"),
     ("meeting notes", SWIFT / "Meetings" / "MeetingNotesWriter.swift", CSHARP / "Meetings" / "MeetingNotesWriter.cs"),
+    ("meeting script", SWIFT / "AI" / "CleanupPrompt.swift", CSHARP / "AI" / "CleanupPrompt.cs", "meetingScript", "MeetingScriptText"),
 ]
 
 
-def swift_prompt(path: Path) -> str:
+def swift_prompt(path: Path, name: str = "system") -> str:
     src = path.read_text(encoding="utf-8").replace("\r\n", "\n")
-    m = re.search(r'static let system = """\n(.*?)\n\s*"""', src, re.S)
+    m = re.search(rf'static let {name} = """\n(.*?)\n\s*"""', src, re.S)
     if not m:
         sys.exit(f"Could not find the system prompt in {path}")
     return textwrap.dedent(m.group(1))
 
 
-def csharp_prompt(path: Path) -> str:
+def csharp_prompt(path: Path, name: str = "SystemText") -> str:
     """Reads `const string SystemText = \"\"\" ... \"\"\";` with C# raw string literal rules: the whitespace
     before the closing quotes is removed from every line; whitespace-only lines become empty."""
     src = path.read_text(encoding="utf-8").replace("\r\n", "\n")
-    m = re.search(r'const string SystemText = """\n(.*?)\n([ \t]*)""";', src, re.S)
+    m = re.search(rf'const string {name} = """\n(.*?)\n([ \t]*)""";', src, re.S)
     if not m:
-        sys.exit(f"Could not find SystemText in {path}")
+        sys.exit(f"FAIL  Could not find {name} in {path}")
     indent = m.group(2)
     lines = []
     for line in m.group(1).split("\n"):
@@ -53,8 +54,9 @@ def csharp_prompt(path: Path) -> str:
 
 def main() -> int:
     failed = False
-    for name, swift_path, cs_path in PAIRS:
-        a, b = swift_prompt(swift_path), csharp_prompt(cs_path)
+    for name, swift_path, cs_path, *names in PAIRS:
+        swift_name, cs_name = names or ("system", "SystemText")
+        a, b = swift_prompt(swift_path, swift_name), csharp_prompt(cs_path, cs_name)
         if a == b:
             print(f"ok    {name} prompt ({len(a)} characters)")
             continue
