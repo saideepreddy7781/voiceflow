@@ -53,6 +53,9 @@ struct VoiceFlowApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let showHubNotification = Notification.Name("com.saideep.voiceflow.showHub")
     @MainActor static var model: AppModel?
+    /// Longest a quit waits for the meeting's last chunks.
+    private static let quitWaitSeconds = 10.0
+    @MainActor private var terminationReplied = false
 
     /// Dock or menu-bar-only is decided before launch finishes: switching later, right before showing a
     /// window, left the window created but never shown.
@@ -82,10 +85,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard recording else { return .terminateNow }
         Task { @MainActor in
             await Self.model?.notetaker.finishRecording(writeNotes: false)
-            Self.model?.controller.shutdown()
-            sender.reply(toApplicationShouldTerminate: true)
+            self.completeTermination(sender)
+        }
+        // Chunks already uploading can sit behind a rate limit for minutes. The live snapshot on disk is
+        // recovered at next launch, so quitting never has to wait for them.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.quitWaitSeconds))
+            self.completeTermination(sender)
         }
         return .terminateLater
+    }
+
+    @MainActor private func completeTermination(_ sender: NSApplication) {
+        guard !terminationReplied else { return }
+        terminationReplied = true
+        Self.model?.controller.shutdown()
+        sender.reply(toApplicationShouldTerminate: true)
     }
 
     /// Closing the last window keeps VoiceFlow running in the menu bar.

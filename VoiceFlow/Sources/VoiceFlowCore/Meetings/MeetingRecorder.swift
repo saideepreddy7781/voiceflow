@@ -80,6 +80,8 @@ public final class MeetingRecorder {
     static let finalAttempts = 3
     /// Longest Stop spends retrying failed chunks.
     static let finalRetrySeconds = 180.0
+    /// Longest Stop spends retrying failed chunks in this recorder (shortened in tests).
+    var finalRetryLimit = MeetingRecorder.finalRetrySeconds
     /// With less audio budget than this left in the hour, meetings skip second opinions.
     static let secondOpinionHeadroom = 900.0
 
@@ -310,10 +312,12 @@ public final class MeetingRecorder {
     }
 
     /// Rate limits are waited out (`GroqGate` has already waited what it can); other errors retried after a short pause.
-    nonisolated private static func attempt(wav: Data, request: ChunkRequest, tries: Int, transcribe: Transcribe,
+    /// Past `deadline` no retry starts, and no pause runs beyond it.
+    nonisolated private static func attempt(wav: Data, request: ChunkRequest, tries: Int, deadline: Date? = nil, transcribe: Transcribe,
                                             retryDelay: @Sendable (Int) -> Double, log: Logger) async -> Result<DetailedTranscript, Error> {
         var last: Error = ProviderError.badResponse
         for attempt in 1...tries {
+            if attempt > 1, let deadline, Date() >= deadline { break }
             do {
                 return .success(try await transcribe(wav, request))
             } catch {
@@ -322,8 +326,9 @@ public final class MeetingRecorder {
                 if case ProviderError.missingKey = error { break }
                 if case ProviderError.dailyLimit = error { break }
                 if attempt < tries {
-                    let wait: Double
+                    var wait: Double
                     if case ProviderError.rateLimited(let retryAfter) = error { wait = min(60, (retryAfter ?? 10) + 1) } else { wait = retryDelay(attempt) }
+                    if let deadline { wait = min(wait, max(0, deadline.timeIntervalSinceNow)) }
                     if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
                 }
             }
@@ -349,7 +354,9 @@ public final class MeetingRecorder {
     private func accept(_ transcript: DetailedTranscript, map: TimeMap, voicedSeconds: Double, speaker: Speaker, request: ChunkRequest) {
         if speaker == .you { micLanguage = transcript.language ?? micLanguage } else { callLanguage = transcript.language ?? callLanguage }
         // A forced language produced this if it isn't what auto-detect would be trusted to say on its own.
-        let viaOpinion = request.hint != nil || (transcript.language.map { $0 != "en" && request.plan.languages.contains($0) } ?? false)
+        // A hint that lost to auto-detect (the stream moved to English) doesn't count, so the sticky language lets go.
+        let viaOpinion = (request.hint != nil && transcript.language == request.hint)
+            || (transcript.language.map { $0 != "en" && request.plan.languages.contains($0) } ?? false)
         if speaker == .you {
             micSide.tracker.observe(language: transcript.language, viaOpinion: viaOpinion, listed: request.plan.languages)
         } else {
@@ -382,7 +389,7 @@ public final class MeetingRecorder {
     private func retryHeld(enabled: Bool) async {
         let waiting = hold.takeAll()
         guard !waiting.isEmpty, let settings else { return }
-        let deadline = Date().addingTimeInterval(Self.finalRetrySeconds)
+        let deadline = Date().addingTimeInterval(finalRetryLimit)
         for chunk in waiting {
             guard enabled, dailyLimit == nil, Date() < deadline else {
                 markLost(map: chunk.map, seconds: chunk.voicedSeconds, speaker: chunk.speaker)
@@ -390,7 +397,8 @@ public final class MeetingRecorder {
             }
             let request = request(for: chunk.speaker, settings: settings)
             let wav = AudioMath.wav(AudioMath.normalized(chunk.floatSamples))
-            let result = await Self.attempt(wav: wav, request: request, tries: Self.finalAttempts, transcribe: transcribe, retryDelay: retryDelay, log: log)
+            let result = await Self.attempt(wav: wav, request: request, tries: Self.finalAttempts, deadline: deadline,
+                                            transcribe: transcribe, retryDelay: retryDelay, log: log)
             switch result {
             case .success(let transcript):
                 accept(transcript, map: chunk.map, voicedSeconds: chunk.voicedSeconds, speaker: chunk.speaker, request: request)

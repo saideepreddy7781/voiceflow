@@ -57,6 +57,17 @@ public struct TimeMap: Sendable, Equatable {
     public func meetingTime(chunkSeconds t: Double) -> Double {
         guard let first = spans.first else { return t }
         guard t > first.chunkStart else { return first.meetingStart }
+        for (i, span) in spans.enumerated().reversed() where t >= span.chunkStart {
+            if t > span.chunkStart + span.seconds, i + 1 < spans.count { return spans[i + 1].meetingStart }
+            return span.meetingStart + min(t - span.chunkStart, span.seconds)
+        }
+        return first.meetingStart
+    }
+
+    /// Meeting time for the end of a line. A position inside a splice is the end of the speech before it.
+    public func meetingEndTime(chunkSeconds t: Double) -> Double {
+        guard let first = spans.first else { return t }
+        guard t > first.chunkStart else { return first.meetingStart }
         for span in spans.reversed() where t >= span.chunkStart {
             return span.meetingStart + min(t - span.chunkStart, span.seconds)
         }

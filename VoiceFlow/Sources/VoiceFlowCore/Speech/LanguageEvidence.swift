@@ -26,6 +26,17 @@ public enum LanguageEvidence {
         return common - 0.5 * vowelEnd
     }
 
+    /// Share of words ending in a, i, o or u above which Latin-letter text can be Indian-language speech spelled by
+    /// sound. Technical English fails `englishScore` on its vocabulary alone and sits well below this.
+    public static let soundSpelledVowelShare = 0.2
+
+    /// Whether Latin-letter text ends enough words in vowels to be Telugu or Hindi spelled by sound.
+    public static func looksSoundSpelled(_ text: String) -> Bool {
+        let words = latinWords(text)
+        guard !words.isEmpty else { return false }
+        return Double(words.filter { "aiou".contains($0.last!) }.count) / Double(words.count) >= soundSpelledVowelShare
+    }
+
     /// Nil when the text is too short to tell or isn't mostly Latin letters.
     public static func readsAsEnglish(_ text: String) -> Bool? {
         guard Script.dominant(in: text) == .latin, let score = englishScore(text) else { return nil }

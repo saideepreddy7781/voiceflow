@@ -124,7 +124,9 @@ public struct UpdateChecker: Sendable {
 
     /// The link opens in the browser, so only this repository's own pages are accepted.
     static func safeURL(_ text: String?) -> URL {
-        guard let text, text.hasPrefix(repository + "/"), let url = URL(string: text), url.scheme == "https" else { return releasesPage }
+        // ".." would climb out of the repository once the browser resolves it.
+        guard let text, text.hasPrefix(repository + "/"), let url = URL(string: text), url.scheme == "https",
+              !url.pathComponents.contains("..") else { return releasesPage }
         return url
     }
 }

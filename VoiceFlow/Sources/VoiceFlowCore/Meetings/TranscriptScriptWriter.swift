@@ -111,7 +111,7 @@ public struct TranscriptScriptWriter: Sendable {
                 return try await chat.complete(model: model, system: CleanupPrompt.meetingScript,
                                                user: Self.userMessage(texts, telugu: telugu, hindi: hindi),
                                                maxTokens: 3_000, json: true, timeout: 60, priority: .background)
-            } catch ProviderError.rateLimited(let retryAfter) where attempt < 4 {
+            } catch ProviderError.rateLimited(let retryAfter) where attempt < 4 && (retryAfter ?? 0) <= MeetingNotesWriter.maxRateLimitWait {
                 attempt += 1
                 try await Task.sleep(for: .seconds((retryAfter ?? 8) + 1))
             }

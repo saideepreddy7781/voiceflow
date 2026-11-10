@@ -55,6 +55,16 @@ struct ResolverListTests {
         #expect(LanguageResolver.choose(auto: auto, opinions: [o("te", "నేను రేపు office కి వస్తాను", -0.4)], plan: plan).language == "te")
     }
 
+    @Test func technicalEnglishIsNotTreatedAsDisguisedTelugu() {
+        let plan = LanguagePlan(languages: ["en", "te"])
+        let jargon = "Deploy the Kubernetes ingress controller behind nginx with mutual TLS termination"
+        #expect(LanguageEvidence.readsAsEnglish(jargon) == false)
+        let auto = t(jargon, "en", -0.2)
+        #expect(LanguageResolver.opinionLanguages(after: auto, plan: plan).isEmpty)
+        let out = LanguageResolver.choose(auto: auto, opinions: [o("te", "డిప్లాయ్ ది కుబెర్నెటిస్ ఇంగ్రెస్ కంట్రోలర్", -0.6)], plan: plan)
+        #expect(out.language == "en")
+    }
+
     @Test func accentedEnglishSurvivesAFalseAlarm() {
         let plan = LanguagePlan(languages: ["en", "te"])
         let out = LanguageResolver.choose(auto: t(disguised, "en", -0.15), opinions: [o("te", "గరిగాాందాలిండు", -0.70)], plan: plan)
@@ -218,6 +228,13 @@ struct StreamChunkerTests {
         #expect(chunks.count == 1)
     }
 
+    @Test func aPositionInsideASpliceStartsAtTheNextSpan() {
+        let map = TimeMap(spans: [.init(chunkStart: 0, meetingStart: 60, seconds: 2), .init(chunkStart: 2.25, meetingStart: 90, seconds: 2)])
+        #expect(abs(map.meetingTime(chunkSeconds: 2.1) - 90) < 0.001)
+        #expect(abs(map.meetingEndTime(chunkSeconds: 2.1) - 62) < 0.001)
+        #expect(abs(map.meetingTime(chunkSeconds: 1.5) - 61.5) < 0.001)
+    }
+
     @Test func splittingAtARemovedPauseUsesWordTimes() {
         let map = TimeMap(spans: [.init(chunkStart: 0, meetingStart: 100, seconds: 2), .init(chunkStart: 2.25, meetingStart: 160, seconds: 2)])
         let words: [DetailedTranscript.Word] = [.init(word: "before", start: 0.2, end: 0.8), .init(word: "pause", start: 1, end: 1.6), .init(word: "after", start: 2.4, end: 3)]
@@ -252,6 +269,18 @@ struct EchoTests {
         let text = "the payment service is ready for the next release"
         let out = TranscriptMerge.merge(existing: [line(10, text, .others)], incoming: [line(60, text, .you)])
         #expect(out.count == 2)
+    }
+
+    @Test func aReplyRepeatingTheQuestionStays() {
+        let others = TranscriptLine(time: 10, speaker: .others, text: "Can you send me the report by Friday?", end: 13)
+        let reply = TranscriptLine(time: 13.5, speaker: .you, text: "Yes, I can send you the report by Friday", end: 16)
+        #expect(TranscriptMerge.merge(existing: [others], incoming: [reply]).count == 2)
+    }
+
+    @Test func aCallEchoIsStillRemovedWhenLinesHaveEndTimes() {
+        let others = TranscriptLine(time: 10, speaker: .others, text: "the payment service is ready for the next release", end: 14)
+        let echo = TranscriptLine(time: 10.4, speaker: .you, text: "payment service is ready for the next release", end: 14.2)
+        #expect(TranscriptMerge.merge(existing: [others], incoming: [echo]).map(\.speaker) == [.others])
     }
 
     @Test func mergeIsOrderedByTime() {
