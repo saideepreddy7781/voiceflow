@@ -19,6 +19,8 @@ checked.
    Telugu speaker's call stays Hindi, and Spanish stays Spanish. Everywhere else it is `unlisted`.
 2. The text doesn't read as its label, and another listed language exists: `disguised`. This is Telugu that Whisper
    spelled by sound in English letters and labelled English, or Telugu written in Devanagari and labelled Hindi.
+   For English this also needs sound-spelled text (at least 20% of words ending in a, i, o or u), so jargon-heavy
+   English isn't sent for a Telugu opinion.
 3. Confidence below -0.45: `lowConfidence`.
 
 Confusable languages are the Indic set `te hi ta kn ml mr bn gu pa ur ne as or si sa`.
@@ -104,6 +106,8 @@ that spans a removed silence of at least 2 s is split at that point using the wo
 `TranscriptMerge.merge` sorts both sides by time, then removes echoes and collapses repeats. A mic line is an echo when
 most of its words were said on the call around the same time. Lines under 3 words are never echoes. Lines of 3 to 5
 words need 90% of their words within 2 s. Lines of 6 or more need 60% within 4 s. The call's line is the one kept.
+When both lines have end times they must also overlap by at least half of the shorter line, so a reply that repeats
+the question stays.
 
 ## Audio budget
 

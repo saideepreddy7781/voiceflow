@@ -429,11 +429,8 @@ private struct KeySettings: View {
         SettingsGroup("Groq") {
             KeyRow(model: model, key: .groq)
         }
-        SettingsGroup("Gemini (optional)") {
-            KeyRow(model: model, key: .gemini)
-        }
         if let error = model.lastError { AttentionLine(text: error) }
-        HelpText("Keys are stored in your macOS Keychain and sent only to their own provider.")
+        HelpText("Your key is stored in your macOS Keychain and sent only to Groq.")
     }
 }
 
