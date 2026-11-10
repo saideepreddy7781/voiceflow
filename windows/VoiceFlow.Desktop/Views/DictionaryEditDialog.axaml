@@ -1,0 +1,25 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.DictionaryEditDialog"
+             x:DataType="vm:DictionaryEditViewModel">
+  <Border Classes="card" Width="440" Padding="24">
+    <StackPanel Spacing="16">
+      <TextBlock Text="{Binding Heading}" Classes="h2"/>
+      <StackPanel Spacing="4">
+        <TextBlock Text="Word or name" Classes="caption subtle"/>
+        <TextBox Text="{Binding Term}" PlaceholderText="Priya, Kubernetes, LearnX" AutomationProperties.Name="Word or name"/>
+      </StackPanel>
+      <CheckBox IsChecked="{Binding IsCorrection}" Content="Also correct a misspelling"/>
+      <StackPanel Spacing="4" IsVisible="{Binding IsCorrection}">
+        <TextBlock Text="What the recogniser types" Classes="caption subtle"/>
+        <TextBox Text="{Binding Misspelling}" AutomationProperties.Name="Misspelling"/>
+      </StackPanel>
+      <TextBlock Text="{Binding Error}" Classes="callout wrap" Foreground="{DynamicResource Signal}" IsVisible="{Binding HasError}"/>
+      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+        <Button Content="Cancel" Command="{Binding CancelCommand}" IsCancel="True"/>
+        <Button Classes="primary" Content="Save" Command="{Binding SaveCommand}" IsDefault="True"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</UserControl>

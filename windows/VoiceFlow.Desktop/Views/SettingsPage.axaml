@@ -1,0 +1,33 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel">
+  <Grid ColumnDefinitions="216,1,*">
+    <StackPanel Margin="16,0,16,16" Spacing="2">
+      <TextBlock Text="Settings" Classes="title" Margin="8,16,0,16"/>
+      <ItemsControl ItemsSource="{Binding Sections}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><StackPanel Spacing="2"/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:SettingsNav">
+            <RadioButton Theme="{StaticResource NavItem}" GroupName="settings" IsChecked="{Binding IsSelected}" AutomationProperties.Name="{Binding Title}">
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <PathIcon Data="{Binding IconKey, Converter={StaticResource IconByKey}}" Width="16" Height="16" Foreground="{Binding $parent[RadioButton].Foreground}"/>
+                <TextBlock Text="{Binding Title}" FontSize="13" Foreground="{Binding $parent[RadioButton].Foreground}" FontWeight="{Binding $parent[RadioButton].FontWeight}" VerticalAlignment="Center"/>
+              </StackPanel>
+            </RadioButton>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+    <Rectangle Grid.Column="1" Classes="vhair"/>
+    <ScrollViewer Grid.Column="2" x:Name="Scroller">
+      <StackPanel Spacing="20" MaxWidth="720" Margin="32,16,32,32" HorizontalAlignment="Stretch">
+        <TextBlock Text="{Binding SelectedSection.Title}" Classes="h2"/>
+        <ContentControl Content="{Binding Current}"/>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

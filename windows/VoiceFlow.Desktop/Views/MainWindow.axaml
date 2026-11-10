@@ -1,0 +1,77 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+        xmlns:c="using:VoiceFlow.Desktop.Controls"
+        xmlns:chrome="using:Avalonia.Controls.Chrome"
+        x:Class="VoiceFlow.Desktop.Views.MainWindow"
+        x:DataType="vm:ShellViewModel"
+        Title="VoiceFlow" Icon="/Assets/VoiceFlow.ico"
+        Width="1180" Height="800" MinWidth="880" MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        ExtendClientAreaToDecorationsHint="True"
+        Background="{DynamicResource WindowBg}">
+  <Panel>
+    <Grid ColumnDefinitions="Auto,*">
+      <!-- Sidebar -->
+      <Border x:Name="Sidebar" Width="232" Background="{DynamicResource SidebarBg}" BorderBrush="{DynamicResource Hairline}" BorderThickness="0,0,1,0">
+        <DockPanel Margin="12,0,12,12">
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="8,18,0,24">
+            <c:LogoMark Width="28" Height="28"/>
+            <TextBlock Classes="navText" Text="VoiceFlow" FontSize="17" FontWeight="SemiBold" FontFamily="{DynamicResource FontDisplay}" VerticalAlignment="Center"/>
+          </StackPanel>
+          <Rectangle DockPanel.Dock="Bottom" Height="0"/>
+          <StackPanel DockPanel.Dock="Bottom" Spacing="2" x:Name="BottomNav">
+            <Rectangle Classes="hair" Margin="4,0,4,8"/>
+            <ItemsControl ItemsSource="{Binding BottomItems}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:NavItem">
+                  <RadioButton Theme="{StaticResource NavItem}" Classes="nav" GroupName="nav" IsChecked="{Binding IsSelected}" AutomationProperties.Name="{Binding Title}" ToolTip.Tip="{Binding Title}" ToolTip.ServiceEnabled="False">
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                      <PathIcon Data="{Binding IconKey, Converter={StaticResource IconByKey}}" Foreground="{Binding $parent[RadioButton].Foreground}"/>
+                      <TextBlock Classes="navText" Text="{Binding Title}" Foreground="{Binding $parent[RadioButton].Foreground}" FontWeight="{Binding $parent[RadioButton].FontWeight}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                  </RadioButton>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="2"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+            </ItemsControl>
+          </StackPanel>
+          <ItemsControl ItemsSource="{Binding TopItems}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:NavItem">
+                <RadioButton Theme="{StaticResource NavItem}" Classes="nav" GroupName="nav" IsChecked="{Binding IsSelected}" AutomationProperties.Name="{Binding Title}" ToolTip.Tip="{Binding Title}" ToolTip.ServiceEnabled="False">
+                  <StackPanel Orientation="Horizontal" Spacing="12">
+                    <PathIcon Data="{Binding IconKey, Converter={StaticResource IconByKey}}" Foreground="{Binding $parent[RadioButton].Foreground}"/>
+                    <TextBlock Classes="navText" Text="{Binding Title}" Foreground="{Binding $parent[RadioButton].Foreground}" FontWeight="{Binding $parent[RadioButton].FontWeight}" VerticalAlignment="Center"/>
+                  </StackPanel>
+                </RadioButton>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><StackPanel Spacing="2"/></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+          </ItemsControl>
+        </DockPanel>
+      </Border>
+
+      <!-- Page. Row 0 stays clear for the Windows caption buttons. -->
+      <Grid Grid.Column="1" RowDefinitions="32,*">
+        <TransitioningContentControl Grid.Row="1" Content="{Binding Current}" x:Name="PageHost">
+          <TransitioningContentControl.PageTransition>
+            <c:FadeRise/>
+          </TransitioningContentControl.PageTransition>
+        </TransitioningContentControl>
+      </Grid>
+    </Grid>
+
+    <!-- Window drag strip over the top edge. -->
+    <Border Height="32" VerticalAlignment="Top" Background="Transparent" chrome:WindowDecorationProperties.ElementRole="TitleBar"/>
+
+    <!-- Dialog overlay -->
+    <Panel IsVisible="{Binding Dialog, Converter={x:Static ObjectConverters.IsNotNull}}" Background="{DynamicResource Scrim}">
+      <ContentControl Content="{Binding Dialog}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+    </Panel>
+  </Panel>
+</Window>

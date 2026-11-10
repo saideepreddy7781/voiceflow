@@ -1,0 +1,90 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.StylePage"
+             x:DataType="vm:StyleViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="16" MaxWidth="880" Margin="{DynamicResource PagePadding}">
+      <StackPanel Spacing="4">
+        <TextBlock Text="Style" Classes="title"/>
+        <TextBlock Text="VoiceFlow matches its writing to the app you're in. Changes save instantly." Classes="body muted wrap"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="6">
+        <PathIcon Data="{StaticResource IconInfo}" Width="14" Height="14" Foreground="{DynamicResource FgSubtle}"/>
+        <TextBlock Text="Styles apply to English dictation. Code editors and terminals always keep code formatting." Classes="callout muted wrap"/>
+      </StackPanel>
+
+      <Border Classes="segments" HorizontalAlignment="Left">
+        <ItemsControl ItemsSource="{Binding Tabs}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="2"/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:CategoryTab">
+              <RadioButton Theme="{StaticResource Segment}" GroupName="styletab" Content="{Binding Name}" IsChecked="{Binding IsSelected}"/>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+      <TextBlock Text="{Binding Hint}" Classes="callout muted"/>
+
+      <ItemsControl ItemsSource="{Binding Options}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><UniformGrid Rows="1" Columns="3" ColumnSpacing="12"/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:StyleOption">
+            <RadioButton Theme="{StaticResource OptionCard}" GroupName="style" IsChecked="{Binding IsSelected}" AutomationProperties.Name="{Binding Name}">
+              <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="{Binding Name}" Classes="h3"/>
+                  <PathIcon Grid.Column="1" Data="{StaticResource IconCheckmarkCircle}" Width="18" Height="18" IsVisible="{Binding IsSelected}"/>
+                </Grid>
+                <TextBlock Text="{Binding Summary}" Classes="caption subtle wrap"/>
+                <Border Classes="inset" MinHeight="96">
+                  <TextBlock Text="{Binding Example}" Classes="callout wrap"/>
+                </Border>
+              </StackPanel>
+            </RadioButton>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <Rectangle Classes="hair" Margin="0,8"/>
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Auto Cleanup" Classes="h2"/>
+        <TextBlock Text="How much VoiceFlow edits what you say. Applies in every app, starting with your next dictation." Classes="body muted wrap"/>
+      </StackPanel>
+      <ItemsControl ItemsSource="{Binding CleanupOptions}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><UniformGrid Rows="1" Columns="3" ColumnSpacing="12"/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:CleanupOption">
+            <RadioButton Theme="{StaticResource OptionCard}" GroupName="cleanup" IsChecked="{Binding IsSelected}" AutomationProperties.Name="{Binding Name}">
+              <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="{Binding Name}" Classes="h3"/>
+                    <Border Classes="chip" IsVisible="{Binding IsDefault}"><TextBlock Text="Default"/></Border>
+                  </StackPanel>
+                  <PathIcon Grid.Column="1" Data="{StaticResource IconCheckmarkCircle}" Width="18" Height="18" IsVisible="{Binding IsSelected}"/>
+                </Grid>
+                <TextBlock Text="{Binding Summary}" Classes="caption subtle wrap"/>
+                <Border Classes="inset">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="You said" Classes="overline"/>
+                    <TextBlock Text="{Binding Said}" Classes="caption subtle wrap"/>
+                    <TextBlock Text="VoiceFlow types" Classes="overline" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding Typed}" Classes="callout wrap"/>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </RadioButton>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

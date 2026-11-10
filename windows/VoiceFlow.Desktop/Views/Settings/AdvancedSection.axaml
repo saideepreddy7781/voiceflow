@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             x:Class="VoiceFlow.Desktop.Views.Settings.AdvancedSection"
+             x:DataType="vm:AdvancedSettings">
+  <StackPanel Spacing="16">
+    <StackPanel Spacing="8">
+      <TextBlock Text="Features" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Command Mode" Description="Hold the Command Mode keys and tell VoiceFlow how to edit the selected text.">
+            <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding CommandMode}"/>
+          </c:SettingRow>
+          <c:SettingRow Title="Whisper mode" Description="Picks up quiet speech.">
+            <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding WhisperMode}"/>
+          </c:SettingRow>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+    <StackPanel Spacing="8">
+      <TextBlock Text="Models (Groq)" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Speech">
+            <ComboBox ItemsSource="{Binding SpeechModels}" SelectedItem="{Binding SpeechModel}" Width="240"/>
+          </c:SettingRow>
+          <c:SettingRow Title="Cleanup">
+            <ComboBox ItemsSource="{Binding TextModels}" SelectedItem="{Binding CleanupModel}" Width="240"/>
+          </c:SettingRow>
+          <c:SettingRow Title="Command Mode">
+            <ComboBox ItemsSource="{Binding TextModels}" SelectedItem="{Binding CommandModel}" Width="240"/>
+          </c:SettingRow>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+    <StackPanel Spacing="8">
+      <TextBlock Text="Setup" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Run setup again">
+            <Button Content="Open setup" Command="{Binding RunSetupCommand}"/>
+          </c:SettingRow>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

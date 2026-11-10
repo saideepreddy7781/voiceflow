@@ -1,0 +1,13 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:v="using:VoiceFlow.Desktop.Views"
+             x:Class="VoiceFlow.Desktop.Views.Settings.KeysSection"
+             x:DataType="vm:KeysSettings">
+  <StackPanel Spacing="16">
+    <TextBlock Classes="body muted wrap" Text="VoiceFlow uses Groq for speech recognition and cleanup with your own free key. Your key stays in Windows Credential Manager and goes only to Groq."/>
+    <Border Classes="card" Padding="20">
+      <v:KeyFieldView DataContext="{Binding Groq}"/>
+    </Border>
+  </StackPanel>
+</UserControl>

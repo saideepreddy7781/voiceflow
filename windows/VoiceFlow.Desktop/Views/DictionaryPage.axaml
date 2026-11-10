@@ -1,0 +1,68 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.DictionaryPage"
+             x:DataType="vm:DictionaryViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="16" MaxWidth="880" Margin="{DynamicResource PagePadding}">
+      <Grid ColumnDefinitions="*,Auto,8,Auto">
+        <StackPanel Spacing="4" Margin="0,0,16,0">
+          <TextBlock Text="Dictionary" Classes="title"/>
+          <TextBlock Text="Names, jargon and spellings VoiceFlow should always get right." Classes="body muted wrap"/>
+        </StackPanel>
+        <Button Grid.Column="1" Content="Import" Command="{Binding ImportCommand}" VerticalAlignment="Top" Margin="0,4,0,0"/>
+        <Button Grid.Column="3" Classes="primary" Command="{Binding AddCommand}" VerticalAlignment="Top" Margin="0,4,0,0">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <PathIcon Data="{StaticResource IconAdd}" Width="14" Height="14" Foreground="{DynamicResource OnPrimary}"/>
+            <TextBlock Text="Add word" Foreground="{DynamicResource OnPrimary}" FontSize="13" FontWeight="Medium"/>
+          </StackPanel>
+        </Button>
+      </Grid>
+
+      <Grid ColumnDefinitions="Auto,*">
+        <Border Classes="segments">
+          <StackPanel Orientation="Horizontal" Spacing="2">
+            <RadioButton Theme="{StaticResource Segment}" GroupName="dicttab" Content="All" IsChecked="{Binding ShowAll}"/>
+            <RadioButton Theme="{StaticResource Segment}" GroupName="dicttab" Content="Added by you" IsChecked="{Binding ShowYours}"/>
+            <RadioButton Theme="{StaticResource Segment}" GroupName="dicttab" Content="Learned" IsChecked="{Binding ShowLearned}"/>
+          </StackPanel>
+        </Border>
+        <TextBox Grid.Column="1" Classes="search" Text="{Binding SearchText}" PlaceholderText="Search words" MaxWidth="280" HorizontalAlignment="Right" Width="240" AutomationProperties.Name="Search words">
+          <TextBox.InnerLeftContent>
+            <PathIcon Data="{StaticResource IconSearch}" Width="16" Height="16" Foreground="{DynamicResource FgSubtle}" Margin="12,0,0,0"/>
+          </TextBox.InnerLeftContent>
+        </TextBox>
+      </Grid>
+
+      <TextBlock Text="{Binding Notice}" Classes="callout muted" IsVisible="{Binding HasNotice}"/>
+
+      <Border Classes="card list" Padding="0" IsVisible="{Binding !IsEmpty}">
+        <ItemsControl ItemsSource="{Binding Rows}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:DictionaryRow">
+              <Border Classes="row" Padding="20,12">
+                <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="{Binding Term}" FontSize="14" FontWeight="Medium" VerticalAlignment="Center"/>
+                    <PathIcon Data="{StaticResource IconArrowRight}" Width="12" Height="12" Foreground="{DynamicResource FgSubtle}" IsVisible="{Binding HasCorrection}"/>
+                    <TextBlock Text="{Binding Misspelling}" Classes="callout muted" VerticalAlignment="Center" IsVisible="{Binding HasCorrection}"/>
+                    <Border Classes="chip" IsVisible="{Binding Learned}"><TextBlock Text="Learned"/></Border>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Classes="rowActions" Orientation="Horizontal" Spacing="2">
+                    <Button Classes="icon" Command="{Binding EditCommand}" ToolTip.Tip="Edit" AutomationProperties.Name="Edit word"><PathIcon Data="{StaticResource IconEdit}" Width="16" Height="16"/></Button>
+                    <Button Classes="icon" Command="{Binding DeleteCommand}" ToolTip.Tip="Delete" AutomationProperties.Name="Delete word"><PathIcon Data="{StaticResource IconDelete}" Width="16" Height="16"/></Button>
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+
+      <StackPanel IsVisible="{Binding IsEmpty}" HorizontalAlignment="Center" Spacing="8" Margin="0,48">
+        <PathIcon Data="{StaticResource IconBookOpen}" Width="32" Height="32" Foreground="{DynamicResource FgSubtle}"/>
+        <TextBlock Text="{Binding EmptyText}" Classes="callout muted wrap" MaxWidth="420" TextAlignment="Center"/>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

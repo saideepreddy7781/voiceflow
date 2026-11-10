@@ -1,0 +1,120 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:svc="using:VoiceFlow.Desktop.Services"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             xmlns:core="using:VoiceFlow.Core"
+             x:Class="VoiceFlow.Desktop.Views.Settings.GeneralSection"
+             x:DataType="vm:GeneralSettings">
+  <StackPanel Spacing="16">
+    <StackPanel Spacing="8">
+      <TextBlock Text="Shortcuts" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Push to talk" Description="Hold, speak, let go.">
+            <ComboBox ItemsSource="{Binding HotkeyChoices}" SelectedItem="{Binding SelectedHotkey}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:Choice"><TextBlock Text="{Binding Label}" FontSize="13"/></DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </c:SettingRow>
+          <ItemsControl ItemsSource="{Binding Shortcuts}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ShortcutRow">
+                <Grid ColumnDefinitions="*,Auto" Margin="0,8">
+                  <TextBlock Text="{Binding Action}" Classes="callout" VerticalAlignment="Center"/>
+                  <ItemsControl Grid.Column="1" ItemsSource="{Binding Keys}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6"/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="x:String">
+                        <Border Classes="keycap"><TextBlock Text="{Binding}"/></Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Spacing="8">
+      <TextBlock Text="Microphone" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Input">
+            <ComboBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" Width="240">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="svc:MicrophoneDevice"><TextBlock Text="{Binding Name}" FontSize="13"/></DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </c:SettingRow>
+          <Grid ColumnDefinitions="*,Auto" Margin="0,12">
+            <c:LevelMeter Level="{Binding TestLevel}" Fill="{DynamicResource MeterFill}" Track="{DynamicResource Track}" Segments="36" VerticalAlignment="Center" Margin="0,0,16,0"/>
+            <Button Grid.Column="1" Content="Test microphone" Command="{Binding ToggleTestCommand}" IsVisible="{Binding !IsTesting}"/>
+            <Button Grid.Column="1" Content="Stop test" Command="{Binding ToggleTestCommand}" IsVisible="{Binding IsTesting}"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Spacing="8">
+      <TextBlock Text="My languages" Classes="h3"/>
+      <Border Classes="card" Padding="20">
+        <StackPanel Spacing="16">
+          <TextBlock Text="{Binding LanguagesHint}" Classes="callout muted wrap"/>
+          <ItemsControl ItemsSource="{Binding VisibleLanguages}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:LanguageItem">
+                <ToggleButton Theme="{StaticResource ChipToggle}" Content="{Binding Name}" IsChecked="{Binding IsSelected}" Margin="0,0,8,8"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <ToggleButton Theme="{StaticResource ChipToggle}" IsChecked="{Binding ShowAllLanguages}" HorizontalAlignment="Left" Content="Show all languages"/>
+          <StackPanel Spacing="8" IsVisible="{Binding SpeaksTelugu}">
+            <TextBlock Text="Write Telugu as" Classes="callout" FontWeight="SemiBold" Margin="0,8,0,0"/>
+            <ItemsControl ItemsSource="{Binding ScriptOptions}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="8"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:TeluguScriptOption">
+                  <RadioButton Theme="{StaticResource OptionCard}" GroupName="telugu" IsChecked="{Binding IsSelected}" Padding="16,12" AutomationProperties.Name="{Binding Name}">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="Medium"/>
+                        <TextBlock Text="{Binding Example}" Classes="callout muted wrap"/>
+                      </StackPanel>
+                      <PathIcon Grid.Column="1" Data="{StaticResource IconCheckmarkCircle}" Width="18" Height="18" IsVisible="{Binding IsSelected}" Margin="12,0,0,0"/>
+                    </Grid>
+                  </RadioButton>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Spacing="8">
+      <TextBlock Text="Cleanup" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Cleanup level" Description="{Binding CleanupHint}">
+            <ComboBox ItemsSource="{Binding CleanupChoices}" SelectedItem="{Binding SelectedCleanup}" Width="140">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:Choice"><TextBlock Text="{Binding Label}" FontSize="13"/></DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </c:SettingRow>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

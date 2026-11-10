@@ -1,0 +1,32 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             x:Class="VoiceFlow.Desktop.Views.Settings.SystemSection"
+             x:DataType="vm:SystemSettings">
+  <StackPanel Spacing="16">
+    <Border Classes="card" Padding="20,4">
+      <StackPanel Classes="rows">
+        <c:SettingRow Title="Launch at sign-in">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding LaunchAtLogin}"/>
+        </c:SettingRow>
+        <c:SettingRow Title="Show Flow bar at all times" Description="Off keeps the bar hidden until you dictate.">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding ShowBarWhenIdle}"/>
+        </c:SettingRow>
+      </StackPanel>
+    </Border>
+    <StackPanel Spacing="8">
+      <TextBlock Text="Sound" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Play a sound when dictation starts">
+            <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding PlaySounds}"/>
+          </c:SettingRow>
+          <c:SettingRow Title="Mute other audio while dictating">
+            <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding MuteAudio}"/>
+          </c:SettingRow>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

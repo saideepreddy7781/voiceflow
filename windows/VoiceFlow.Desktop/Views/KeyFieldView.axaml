@@ -1,0 +1,34 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.KeyFieldView"
+             x:DataType="vm:KeyField">
+  <StackPanel Spacing="12">
+    <Grid ColumnDefinitions="*,Auto">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="{Binding Provider}" Classes="h3" VerticalAlignment="Center"/>
+        <Border Classes="chip"><TextBlock Text="{Binding Status}"/></Border>
+      </StackPanel>
+      <Button Grid.Column="1" Classes="ghost danger" Content="Remove" Command="{Binding RemoveCommand}" IsVisible="{Binding IsStored}"/>
+    </Grid>
+    <Grid ColumnDefinitions="*,8,Auto,8,Auto">
+      <TextBox Text="{Binding Draft}" PasswordChar="•" PlaceholderText="{Binding Placeholder}" AutomationProperties.Name="Groq API key"/>
+      <Button Grid.Column="2" Content="Test" Command="{Binding TestCommand}"/>
+      <Button Grid.Column="4" Classes="primary" Content="Save" Command="{Binding SaveCommand}"/>
+    </Grid>
+    <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding Checking}">
+      <TextBlock Text="Checking your key..." Classes="callout muted"/>
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding HasResult}">
+      <PathIcon Data="{StaticResource IconCheckmarkCircle}" Width="14" Height="14" IsVisible="{Binding ResultOk}"/>
+      <PathIcon Data="{StaticResource IconWarning}" Width="14" Height="14" Foreground="{DynamicResource Signal}" IsVisible="{Binding !ResultOk}"/>
+      <TextBlock Text="{Binding Result}" Classes="callout wrap" VerticalAlignment="Center"/>
+    </StackPanel>
+    <Button Classes="link" Command="{Binding OpenKeysPageCommand}" HorizontalAlignment="Left">
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <TextBlock Text="Get a free key at console.groq.com" FontSize="13"/>
+        <PathIcon Data="{StaticResource IconOpen}" Width="12" Height="12"/>
+      </StackPanel>
+    </Button>
+  </StackPanel>
+</UserControl>

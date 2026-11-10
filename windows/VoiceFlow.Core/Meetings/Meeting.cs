@@ -94,6 +94,8 @@ public sealed class Meeting
     public List<MicGap> MicGaps { get; set; } = [];
     /// <summary>The Markdown file last written to the notes folder, so a rename replaces it.</summary>
     public string? SyncedFileName { get; set; }
+    /// <summary>Names the user gave the two speakers. A missing entry shows the default label.</summary>
+    public Dictionary<Speaker, string> SpeakerNames { get; set; } = [];
 
     public Meeting() { }
 
@@ -106,7 +108,10 @@ public sealed class Meeting
 
     public TimeSpan Duration => (End ?? DateTimeOffset.Now) - Start;
 
-    public string TranscriptText => string.Join("\n", Lines.Select(l => $"[{Clock(l.Time)}] {l.Speaker.Label()}: {l.Text}"));
+    public string LabelFor(Speaker speaker) =>
+        SpeakerNames.TryGetValue(speaker, out var name) && name.Trim().Length > 0 ? name.Trim() : speaker.Label();
+
+    public string TranscriptText => string.Join("\n", Lines.Select(l => $"[{Clock(l.Time)}] {LabelFor(l.Speaker)}: {l.Text}"));
 
     public static string Clock(double seconds)
     {
@@ -152,7 +157,7 @@ public static class MeetingMarkdown
             if (n.Questions.Count > 0) sb.Append("\n## Open questions\n\n" + string.Join("\n", n.Questions.Select(s => $"- {s}")) + "\n");
         }
         if (m.Lines.Count > 0)
-            sb.Append("\n## Transcript\n\n" + string.Join("\n\n", m.Lines.Select(l => $"**{l.Speaker.Label()}** [{Meeting.Clock(l.Time)}]: {l.Text}")) + "\n");
+            sb.Append("\n## Transcript\n\n" + string.Join("\n\n", m.Lines.Select(l => $"**{m.LabelFor(l.Speaker)}** [{Meeting.Clock(l.Time)}]: {l.Text}")) + "\n");
         return sb.ToString();
     }
 

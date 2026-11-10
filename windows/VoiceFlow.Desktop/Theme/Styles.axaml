@@ -1,0 +1,239 @@
+<!-- Type scale and shared surfaces, applied by class. -->
+<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:c="using:VoiceFlow.Desktop.Controls" xmlns:prim="using:Avalonia.Controls.Primitives">
+  <Style Selector="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource FontText}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="TextWrapping" Value="NoWrap"/>
+  </Style>
+  <Style Selector="TextBox, Button, ComboBox, ComboBoxItem, ToolTip, MenuItem, RadioButton, CheckBox">
+    <Setter Property="FontFamily" Value="{DynamicResource FontText}"/>
+  </Style>
+
+  <Style Selector="TextBlock.title">
+    <Setter Property="FontFamily" Value="{DynamicResource FontDisplay}"/>
+    <Setter Property="FontSize" Value="28"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="LetterSpacing" Value="-0.3"/>
+  </Style>
+  <Style Selector="TextBlock.h2">
+    <Setter Property="FontFamily" Value="{DynamicResource FontDisplay}"/>
+    <Setter Property="FontSize" Value="20"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style Selector="TextBlock.h3">
+    <Setter Property="FontSize" Value="15"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style Selector="TextBlock.body">
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="LineHeight" Value="21"/>
+  </Style>
+  <Style Selector="TextBlock.muted">
+    <Setter Property="Foreground" Value="{DynamicResource FgMuted}"/>
+  </Style>
+  <Style Selector="TextBlock.subtle">
+    <Setter Property="Foreground" Value="{DynamicResource FgSubtle}"/>
+  </Style>
+  <Style Selector="TextBlock.callout">
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="LineHeight" Value="19"/>
+  </Style>
+  <Style Selector="TextBlock.caption">
+    <Setter Property="FontSize" Value="12"/>
+  </Style>
+  <Style Selector="TextBlock.overline">
+    <Setter Property="FontSize" Value="11"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{DynamicResource FgSubtle}"/>
+    <Setter Property="LetterSpacing" Value="0.4"/>
+  </Style>
+  <Style Selector="TextBlock.stat">
+    <Setter Property="FontFamily" Value="{DynamicResource FontDisplay}"/>
+    <Setter Property="FontSize" Value="40"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="LetterSpacing" Value="-0.5"/>
+  </Style>
+  <Style Selector="TextBlock.statSmall">
+    <Setter Property="FontFamily" Value="{DynamicResource FontDisplay}"/>
+    <Setter Property="FontSize" Value="24"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="{DynamicResource FontMono}"/>
+    <Setter Property="FontSize" Value="12"/>
+  </Style>
+  <Style Selector="TextBlock.wrap">
+    <Setter Property="TextWrapping" Value="Wrap"/>
+  </Style>
+  <Style Selector="SelectableTextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource FontText}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+    <Setter Property="SelectionBrush" Value="{DynamicResource HairlineStrong}"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+    <Setter Property="LineHeight" Value="21"/>
+    <Setter Property="FontSize" Value="14"/>
+  </Style>
+
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource Surface}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Hairline}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusCard}"/>
+    <Setter Property="Padding" Value="{DynamicResource CardPadding}"/>
+  </Style>
+  <Style Selector="Border.inset">
+    <Setter Property="Background" Value="{DynamicResource SurfaceInset}"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Padding" Value="12"/>
+  </Style>
+  <Style Selector="Border.segments">
+    <Setter Property="Background" Value="{DynamicResource SurfaceInset}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Hairline}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Padding" Value="3"/>
+  </Style>
+  <Style Selector="Border.keycap">
+    <Setter Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource HairlineStrong}"/>
+    <Setter Property="BorderThickness" Value="1,1,1,2"/>
+    <Setter Property="CornerRadius" Value="5"/>
+    <Setter Property="Padding" Value="8,3"/>
+  </Style>
+  <Style Selector="Border.keycap TextBlock">
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+  </Style>
+  <Style Selector="Border.chip">
+    <Setter Property="Background" Value="{DynamicResource SelectedFill}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusPill}"/>
+    <Setter Property="Padding" Value="8,2"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  <Style Selector="Border.chip TextBlock">
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="FontWeight" Value="Medium"/>
+  </Style>
+  <Style Selector="Border.chip.you">
+    <Setter Property="Background" Value="{DynamicResource Fg}"/>
+  </Style>
+  <Style Selector="Border.chip.you TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource OnPrimary}"/>
+  </Style>
+  <Style Selector="Border.notice">
+    <Setter Property="Background" Value="{DynamicResource SignalSoft}"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="Padding" Value="12"/>
+  </Style>
+  <Style Selector="Border.stopGlyph">
+    <Setter Property="Width" Value="10"/>
+    <Setter Property="Height" Value="10"/>
+    <Setter Property="CornerRadius" Value="2"/>
+  </Style>
+  <Style Selector="Rectangle.hair">
+    <Setter Property="Height" Value="1"/>
+    <Setter Property="Fill" Value="{DynamicResource Hairline}"/>
+  </Style>
+  <Style Selector="Rectangle.vhair">
+    <Setter Property="Width" Value="1"/>
+    <Setter Property="Fill" Value="{DynamicResource Hairline}"/>
+  </Style>
+  <Style Selector="Ellipse.recdot">
+    <Setter Property="Width" Value="8"/>
+    <Setter Property="Height" Value="8"/>
+    <Setter Property="Fill" Value="{DynamicResource Signal}"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+    <Style.Animations>
+      <Animation Duration="0:0:1.4" IterationCount="INFINITE" PlaybackDirection="Alternate">
+        <KeyFrame Cue="0%"><Setter Property="Opacity" Value="1"/></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="Opacity" Value="0.35"/></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <!-- Row actions appear on hover and on keyboard focus. -->
+  <Style Selector="StackPanel.rowActions">
+    <Setter Property="Opacity" Value="0"/>
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.1"/>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.row:pointerover StackPanel.rowActions, Border.row:focus-within StackPanel.rowActions, Border.row.previewHover StackPanel.rowActions">
+    <Setter Property="Opacity" Value="1"/>
+  </Style>
+  <Style Selector="Border.row">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.1"/>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="ContentPresenter:nth-child(n+2) > Border.row">
+    <Setter Property="BorderBrush" Value="{DynamicResource Hairline}"/>
+    <Setter Property="BorderThickness" Value="0,1,0,0"/>
+  </Style>
+  <Style Selector="Border.card.list">
+    <Setter Property="ClipToBounds" Value="True"/>
+  </Style>
+  <Style Selector="Border.row:pointerover, Border.row.previewHover">
+    <Setter Property="Background" Value="{DynamicResource HoverFill}"/>
+  </Style>
+
+  <!-- Focus ring for everything keyboard-focusable. -->
+  <Style Selector="Button, ToggleButton, RadioButton, CheckBox, ComboBox, ListBoxItem">
+    <Setter Property="FocusAdorner">
+      <FocusAdornerTemplate>
+        <Border BorderThickness="2" BorderBrush="{DynamicResource FocusRing}" CornerRadius="9" Margin="-4" prim:AdornerLayer.IsClipEnabled="False"/>
+      </FocusAdornerTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="PathIcon">
+    <Setter Property="Width" Value="18"/>
+    <Setter Property="Height" Value="18"/>
+  </Style>
+
+  <!-- Below the compact width the sidebar becomes an icon rail. -->
+  <Style Selector="Window.compact Border#Sidebar">
+    <Setter Property="Width" Value="64"/>
+  </Style>
+  <Style Selector="Window.compact TextBlock.navText">
+    <Setter Property="IsVisible" Value="False"/>
+  </Style>
+  <Style Selector="Window.compact RadioButton.nav">
+    <Setter Property="(ToolTip.ServiceEnabled)" Value="True"/>
+  </Style>
+
+  <Style Selector="c|SettingRow">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Padding="0,12" BorderBrush="{DynamicResource Hairline}" BorderThickness="{TemplateBinding BorderThickness}">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="2" VerticalAlignment="Center" Margin="0,0,24,0">
+              <TextBlock Text="{TemplateBinding Title}" FontSize="14" TextWrapping="Wrap"/>
+              <TextBlock Text="{TemplateBinding Description}" Classes="callout muted wrap"
+                         IsVisible="{TemplateBinding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+            </StackPanel>
+            <ContentPresenter Grid.Column="1" Content="{TemplateBinding Content}" VerticalAlignment="Center"
+                              HorizontalAlignment="Right"/>
+          </Grid>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="StackPanel.rows > c|SettingRow:nth-child(n+2)">
+    <Setter Property="BorderThickness" Value="0,1,0,0"/>
+  </Style>
+  <Style Selector="ComboBox">
+    <Setter Property="MinWidth" Value="180"/>
+    <Setter Property="MinHeight" Value="32"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusControl}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Hairline}"/>
+    <Setter Property="Background" Value="{DynamicResource SurfaceRaised}"/>
+  </Style>
+</Styles>

@@ -1,0 +1,73 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             xmlns:sys="using:System"
+             x:Class="VoiceFlow.Desktop.Views.Settings.PrivacySection"
+             x:DataType="vm:PrivacySettings">
+  <StackPanel Spacing="16">
+    <StackPanel Spacing="8">
+      <TextBlock Text="History" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Keep transcripts" Description="Stored on this PC, readable only by your account.">
+            <ComboBox ItemsSource="{Binding RetentionChoices}" SelectedItem="{Binding SelectedRetention}" Width="200">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:Choice"><TextBlock Text="{Binding Label}" FontSize="13"/></DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </c:SettingRow>
+          <Grid ColumnDefinitions="Auto,8,Auto" Margin="0,12">
+            <Button Content="Show data folder" Command="{Binding OpenDataFolderCommand}"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Spacing="8">
+      <TextBlock Text="What leaves this PC" Classes="h3"/>
+      <Border Classes="card" Padding="20">
+        <TextBlock Classes="callout muted wrap" Text="VoiceFlow sends audio while you dictate, your transcript, the app's name and the short text around your cursor to Groq, using your key. Nothing from password fields or password managers. VoiceFlow never stores audio."/>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Spacing="8">
+      <TextBlock Text="Zero Data Retention" Classes="h3"/>
+      <Border Classes="card" Padding="20">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="callout muted wrap" Text="Groq does not keep your dictation by default. It may log inputs and outputs for up to 30 days, only to troubleshoot reliability problems or investigate suspected abuse."/>
+          <TextBlock Classes="callout muted wrap" Text="Zero Data Retention turns that logging off. Turn it on for your Groq organization in Data Controls. VoiceFlow cannot change this for you."/>
+          <StackPanel Orientation="Horizontal" Spacing="16">
+            <Button Classes="link" Command="{Binding OpenGroqDataControlsCommand}">
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="Open Data Controls" FontSize="13"/>
+                <PathIcon Data="{StaticResource IconOpen}" Width="12" Height="12"/>
+              </StackPanel>
+            </Button>
+            <Button Classes="link" Command="{Binding OpenGroqDataPolicyCommand}">
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="Groq data policy" FontSize="13"/>
+                <PathIcon Data="{StaticResource IconOpen}" Width="12" Height="12"/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Spacing="8">
+      <TextBlock Text="Diagnostics" Classes="h3"/>
+      <Border Classes="card" Padding="20,4">
+        <StackPanel Classes="rows">
+          <c:SettingRow Title="Debug logging" Description="Logs timings and errors. Never what you said or typed.">
+            <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding DebugLogging}"/>
+          </c:SettingRow>
+          <c:SettingRow Title="Copy debug report" Description="Versions, settings and recent error codes, with no dictated text.">
+            <Button Content="Copy" Command="{Binding CopyDebugReportCommand}"/>
+          </c:SettingRow>
+        </StackPanel>
+      </Border>
+      <TextBlock Text="{Binding Notice}" Classes="callout muted" IsVisible="{Binding HasNotice}"/>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

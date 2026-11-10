@@ -1,0 +1,137 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.MeetingDetailView"
+             x:DataType="vm:MeetingDetailViewModel">
+  <UserControl.Resources>
+    <DataTemplate x:Key="Bullet" x:DataType="x:String">
+      <Grid ColumnDefinitions="16,*" Margin="0,0,0,8">
+        <Ellipse Width="4" Height="4" Fill="{DynamicResource FgSubtle}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="2,9,0,0"/>
+        <SelectableTextBlock Grid.Column="1" Text="{Binding}"/>
+      </Grid>
+    </DataTemplate>
+  </UserControl.Resources>
+  <ScrollViewer>
+    <StackPanel Spacing="20" MaxWidth="820" Margin="32,16,32,32">
+      <StackPanel Spacing="4">
+        <TextBox Classes="plain" Text="{Binding Title}" FontSize="24" FontWeight="SemiBold" FontFamily="{DynamicResource FontDisplay}"
+                 AutomationProperties.Name="Meeting title" LostFocus="OnTitleLost" KeyDown="OnTitleKey"/>
+        <TextBlock Text="{Binding Meta}" Classes="callout muted wrap"/>
+        <TextBlock Text="{Binding Attendees}" Classes="callout muted wrap" IsVisible="{Binding HasAttendees}"/>
+      </StackPanel>
+
+      <!-- Wraps to two rows in narrow windows. -->
+      <WrapPanel Orientation="Horizontal">
+        <Border Classes="segments" Margin="0,0,16,8">
+          <StackPanel Orientation="Horizontal" Spacing="2">
+            <RadioButton Theme="{StaticResource Segment}" GroupName="meetingtab" Content="Notes" IsChecked="{Binding ShowNotes}"/>
+            <RadioButton Theme="{StaticResource Segment}" GroupName="meetingtab" Content="Transcript" IsChecked="{Binding ShowTranscript}"/>
+          </StackPanel>
+        </Border>
+        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+          <Button Content="Copy" Command="{Binding CopyMarkdownCommand}"/>
+          <Button Command="{Binding ExportMarkdownCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <PathIcon Data="{StaticResource IconArrowDownload}" Width="16" Height="16"/>
+              <TextBlock Text="Export Markdown" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
+          <Button Classes="icon" ToolTip.Tip="More" AutomationProperties.Name="More meeting actions">
+            <PathIcon Data="{StaticResource IconMoreHorizontal}" Width="16" Height="16"/>
+            <Button.Flyout>
+              <MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuItem Header="Rewrite notes" Command="{Binding RewriteNotesCommand}"/>
+                <MenuItem Header="-"/>
+                <MenuItem Header="Delete meeting" Command="{Binding AskDeleteCommand}"/>
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+        </StackPanel>
+      </WrapPanel>
+
+      <Border Classes="notice" IsVisible="{Binding Failed}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding ErrorText}" Classes="callout wrap"/>
+          <Button Content="Try again" Command="{Binding RewriteNotesCommand}" HorizontalAlignment="Left"/>
+        </StackPanel>
+      </Border>
+      <TextBlock Text="Writing notes. Long meetings take a minute or two." Classes="callout muted" IsVisible="{Binding IsWriting}"/>
+
+      <!-- Notes -->
+      <StackPanel Spacing="24" IsVisible="{Binding ShowNotes}">
+        <StackPanel Spacing="10" IsVisible="{Binding HasSummary}">
+          <TextBlock Text="Summary" Classes="h3"/>
+          <ItemsControl ItemsSource="{Binding Summary}" ItemTemplate="{StaticResource Bullet}"/>
+        </StackPanel>
+        <StackPanel Spacing="10" IsVisible="{Binding HasDecisions}">
+          <TextBlock Text="Decisions" Classes="h3"/>
+          <ItemsControl ItemsSource="{Binding Decisions}" ItemTemplate="{StaticResource Bullet}"/>
+        </StackPanel>
+        <StackPanel Spacing="10" IsVisible="{Binding HasActions}">
+          <TextBlock Text="Action items" Classes="h3"/>
+          <ItemsControl ItemsSource="{Binding ActionItems}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><StackPanel Spacing="8"/></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ActionItemRow">
+                <Grid ColumnDefinitions="28,*">
+                  <CheckBox IsChecked="{Binding Done}" VerticalAlignment="Top" Margin="0,1,0,0" AutomationProperties.Name="{Binding Task}"/>
+                  <StackPanel Grid.Column="1" Spacing="2">
+                    <SelectableTextBlock Text="{Binding Task}"/>
+                    <TextBlock Text="{Binding Meta}" Classes="caption subtle" IsVisible="{Binding HasMeta}"/>
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+        <StackPanel Spacing="10" IsVisible="{Binding HasQuestions}">
+          <TextBlock Text="Open questions" Classes="h3"/>
+          <ItemsControl ItemsSource="{Binding Questions}" ItemTemplate="{StaticResource Bullet}"/>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding !HasNotes}" Spacing="8" Margin="0,24" HorizontalAlignment="Center">
+          <PathIcon Data="{StaticResource IconDocumentText}" Width="28" Height="28" Foreground="{DynamicResource FgSubtle}"/>
+          <TextBlock Text="No notes yet" Classes="h3" HorizontalAlignment="Center"/>
+          <TextBlock Text="Open the Transcript tab to read what was said." Classes="callout muted" HorizontalAlignment="Center"/>
+        </StackPanel>
+      </StackPanel>
+
+      <!-- Transcript -->
+      <StackPanel Spacing="20" IsVisible="{Binding ShowTranscript}">
+        <Border Classes="card" Padding="20,16">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Speaker names" Classes="h3"/>
+            <TextBlock Text="Rename the two speakers. The transcript and Markdown export use these names." Classes="callout muted wrap"/>
+            <Grid ColumnDefinitions="*,16,*">
+              <StackPanel Spacing="4">
+                <TextBlock Text="Your microphone" Classes="caption subtle"/>
+                <TextBox Text="{Binding YouName}" AutomationProperties.Name="Name for your microphone speaker"/>
+              </StackPanel>
+              <StackPanel Grid.Column="2" Spacing="4">
+                <TextBlock Text="Meeting audio" Classes="caption subtle"/>
+                <TextBox Text="{Binding OthersName}" AutomationProperties.Name="Name for the meeting audio speaker"/>
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </Border>
+        <ItemsControl ItemsSource="{Binding Lines}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel Spacing="12"/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:TranscriptRow">
+              <Grid ColumnDefinitions="56,*">
+                <TextBlock Text="{Binding Time}" Classes="caption subtle" Margin="0,3,0,0" VerticalAlignment="Top"/>
+                <StackPanel Grid.Column="1" Spacing="4">
+                  <Border Classes="chip" Classes.you="{Binding IsYou}" HorizontalAlignment="Left"><TextBlock Text="{Binding Speaker}"/></Border>
+                  <SelectableTextBlock Text="{Binding Text}"/>
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

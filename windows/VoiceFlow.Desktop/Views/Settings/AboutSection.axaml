@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             x:Class="VoiceFlow.Desktop.Views.Settings.AboutSection"
+             x:DataType="vm:AboutSettings">
+  <StackPanel Spacing="16">
+    <Border Classes="card">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <c:LogoMark Width="56" Height="56"/>
+        <StackPanel Grid.Column="1" Margin="16,0" Spacing="2" VerticalAlignment="Center">
+          <TextBlock Text="VoiceFlow" Classes="h2"/>
+          <TextBlock Text="{Binding Version}" Classes="callout muted"/>
+          <TextBlock Text="{Binding UpdateText}" Classes="callout muted wrap"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Spacing="8" VerticalAlignment="Center">
+          <Button Content="Check for updates" Command="{Binding CheckUpdatesCommand}"/>
+          <Button Classes="primary" Content="Install update" Command="{Binding InstallCommand}" IsVisible="{Binding UpdateAvailable}"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+    <TextBlock Classes="callout muted wrap" Text="Free and open source under the MIT License. Speech and cleanup run on your own Groq key."/>
+    <Button Classes="link" Command="{Binding OpenRepoCommand}" HorizontalAlignment="Left">
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <TextBlock Text="github.com/saideepreddy7781/voiceflow" FontSize="13"/>
+        <PathIcon Data="{StaticResource IconOpen}" Width="12" Height="12"/>
+      </StackPanel>
+    </Button>
+  </StackPanel>
+</UserControl>

@@ -1,0 +1,54 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:v="using:VoiceFlow.Desktop.Views"
+             xmlns:vs="using:VoiceFlow.Desktop.Views.Settings"
+             xmlns:svc="using:VoiceFlow.Desktop.Services"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             x:Class="VoiceFlow.Desktop.App"
+             RequestedThemeVariant="Default">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://VoiceFlow.Desktop/Theme/Tokens.axaml"/>
+        <ResourceInclude Source="avares://VoiceFlow.Desktop/Theme/Icons.axaml"/>
+        <ResourceInclude Source="avares://VoiceFlow.Desktop/Theme/Controls.axaml"/>
+      </ResourceDictionary.MergedDictionaries>
+      <c:IconConverter x:Key="IconByKey"/>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.DataTemplates>
+    <DataTemplate DataType="vm:HomeViewModel"><v:HomePage/></DataTemplate>
+    <DataTemplate DataType="vm:MeetingsViewModel"><v:MeetingsPage/></DataTemplate>
+    <DataTemplate DataType="vm:LiveMeetingViewModel"><v:LiveMeetingView/></DataTemplate>
+    <DataTemplate DataType="vm:MeetingDetailViewModel"><v:MeetingDetailView/></DataTemplate>
+    <DataTemplate DataType="vm:InsightsViewModel"><v:InsightsPage/></DataTemplate>
+    <DataTemplate DataType="vm:DictionaryViewModel"><v:DictionaryPage/></DataTemplate>
+    <DataTemplate DataType="vm:SnippetsViewModel"><v:SnippetsPage/></DataTemplate>
+    <DataTemplate DataType="vm:StyleViewModel"><v:StylePage/></DataTemplate>
+    <DataTemplate DataType="vm:ScratchpadViewModel"><v:ScratchpadPage/></DataTemplate>
+    <DataTemplate DataType="vm:SettingsViewModel"><v:SettingsPage/></DataTemplate>
+    <DataTemplate DataType="vm:HelpViewModel"><v:HelpPage/></DataTemplate>
+    <DataTemplate DataType="vm:ConfirmDialogViewModel"><v:ConfirmDialog/></DataTemplate>
+    <DataTemplate DataType="vm:DictionaryEditViewModel"><v:DictionaryEditDialog/></DataTemplate>
+    <DataTemplate DataType="vm:SnippetEditViewModel"><v:SnippetEditDialog/></DataTemplate>
+    <DataTemplate DataType="vm:GeneralSettings"><vs:GeneralSection/></DataTemplate>
+    <DataTemplate DataType="vm:NotetakerSettings"><vs:NotetakerSection/></DataTemplate>
+    <DataTemplate DataType="vm:SystemSettings"><vs:SystemSection/></DataTemplate>
+    <DataTemplate DataType="vm:KeysSettings"><vs:KeysSection/></DataTemplate>
+    <DataTemplate DataType="vm:PrivacySettings"><vs:PrivacySection/></DataTemplate>
+    <DataTemplate DataType="vm:AdvancedSettings"><vs:AdvancedSection/></DataTemplate>
+    <DataTemplate DataType="vm:AboutSettings"><vs:AboutSection/></DataTemplate>
+  </Application.DataTemplates>
+
+  <Application.Styles>
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Light" Accent="#161616" RegionColor="#FAFAFA"/>
+        <ColorPaletteResources x:Key="Dark" Accent="#E5E5E5" RegionColor="#151515"/>
+      </FluentTheme.Palettes>
+    </FluentTheme>
+    <StyleInclude Source="avares://VoiceFlow.Desktop/Theme/Styles.axaml"/>
+  </Application.Styles>
+</Application>

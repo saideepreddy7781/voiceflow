@@ -9,6 +9,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceFlow.Core.Tests", "Voi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceFlow.Windows", "VoiceFlow.Windows\VoiceFlow.Windows.csproj", "{C1ED9030-52D0-419B-BF34-BD6961340CC9}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceFlow.Desktop", "VoiceFlow.Desktop\VoiceFlow.Desktop.csproj", "{8AE433AA-7E34-4613-8060-B8D7938CB2F8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceFlow.Desktop.Screenshots", "VoiceFlow.Desktop.Screenshots\VoiceFlow.Desktop.Screenshots.csproj", "{F99CC74A-53EC-4567-AA77-0FFB65CDF77C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceFlow.Desktop.Tests", "VoiceFlow.Desktop.Tests\VoiceFlow.Desktop.Tests.csproj", "{D73616AD-DDCF-412C-94A0-8EC20F9A6ADC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +36,17 @@ Global
 		{C1ED9030-52D0-419B-BF34-BD6961340CC9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C1ED9030-52D0-419B-BF34-BD6961340CC9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C1ED9030-52D0-419B-BF34-BD6961340CC9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8AE433AA-7E34-4613-8060-B8D7938CB2F8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8AE433AA-7E34-4613-8060-B8D7938CB2F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8AE433AA-7E34-4613-8060-B8D7938CB2F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8AE433AA-7E34-4613-8060-B8D7938CB2F8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F99CC74A-53EC-4567-AA77-0FFB65CDF77C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F99CC74A-53EC-4567-AA77-0FFB65CDF77C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F99CC74A-53EC-4567-AA77-0FFB65CDF77C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F99CC74A-53EC-4567-AA77-0FFB65CDF77C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D73616AD-DDCF-412C-94A0-8EC20F9A6ADC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D73616AD-DDCF-412C-94A0-8EC20F9A6ADC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D73616AD-DDCF-412C-94A0-8EC20F9A6ADC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D73616AD-DDCF-412C-94A0-8EC20F9A6ADC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

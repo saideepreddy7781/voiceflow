@@ -1,0 +1,65 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.ScratchpadPage"
+             x:DataType="vm:ScratchpadViewModel">
+  <Grid ColumnDefinitions="272,1,*">
+    <DockPanel Margin="24,0,16,16">
+      <StackPanel DockPanel.Dock="Top" Spacing="16" Margin="0,16,0,16">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="Scratchpad" Classes="title"/>
+          <Button Grid.Column="1" Classes="icon" Command="{Binding NewNoteCommand}" ToolTip.Tip="New note" AutomationProperties.Name="New note" VerticalAlignment="Center">
+            <PathIcon Data="{StaticResource IconAdd}" Width="18" Height="18"/>
+          </Button>
+        </Grid>
+        <TextBox Classes="search" Text="{Binding SearchText}" PlaceholderText="Search notes" AutomationProperties.Name="Search notes">
+          <TextBox.InnerLeftContent>
+            <PathIcon Data="{StaticResource IconSearch}" Width="16" Height="16" Foreground="{DynamicResource FgSubtle}" Margin="12,0,0,0"/>
+          </TextBox.InnerLeftContent>
+        </TextBox>
+      </StackPanel>
+      <ListBox ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:NoteRow">
+            <Border Classes="row">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="2">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <PathIcon Data="{StaticResource IconPin}" Width="12" Height="12" Foreground="{DynamicResource FgMuted}" IsVisible="{Binding Pinned}"/>
+                    <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                  <TextBlock Text="{Binding Updated}" Classes="caption subtle"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Classes="rowActions" Orientation="Horizontal" VerticalAlignment="Center">
+                  <Button Classes="icon" Command="{Binding PinCommand}" ToolTip.Tip="Pin" AutomationProperties.Name="Pin note" Width="28" Height="28" MinHeight="28"><PathIcon Data="{StaticResource IconPin}" Width="14" Height="14"/></Button>
+                  <Button Classes="icon" Command="{Binding DeleteCommand}" ToolTip.Tip="Delete" AutomationProperties.Name="Delete note" Width="28" Height="28" MinHeight="28"><PathIcon Data="{StaticResource IconDelete}" Width="14" Height="14"/></Button>
+                </StackPanel>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </DockPanel>
+    <Rectangle Grid.Column="1" Classes="vhair"/>
+    <Panel Grid.Column="2">
+      <DockPanel Margin="40,16,40,24" IsVisible="{Binding HasNote}">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto">
+          <TextBox Classes="plain" Text="{Binding Title}" PlaceholderText="Untitled" FontSize="22" FontWeight="SemiBold" FontFamily="{DynamicResource FontDisplay}" AutomationProperties.Name="Note title"/>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" Margin="12,0,0,0">
+            <Button Classes="icon" ToolTip.Tip="Dictate hands-free" AutomationProperties.Name="Dictate hands-free"><PathIcon Data="{StaticResource IconMic}" Width="18" Height="18"/></Button>
+            <Button Classes="icon" Command="{Binding CopyNoteCommand}" ToolTip.Tip="Copy note" AutomationProperties.Name="Copy note"><PathIcon Data="{StaticResource IconCopy}" Width="16" Height="16"/></Button>
+          </StackPanel>
+        </Grid>
+        <TextBlock DockPanel.Dock="Bottom" Text="Saved automatically" Classes="caption subtle" Margin="0,8,0,0"/>
+        <TextBox Classes="plain" Text="{Binding Body}" AcceptsReturn="True" TextWrapping="Wrap" FontSize="15" LineHeight="23"
+                 VerticalAlignment="Stretch" VerticalContentAlignment="Top" Margin="0,16,0,0" AutomationProperties.Name="Note text"/>
+      </DockPanel>
+      <StackPanel IsVisible="{Binding !HasNote}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+        <PathIcon Data="{StaticResource IconNote}" Width="32" Height="32" Foreground="{DynamicResource FgSubtle}"/>
+        <TextBlock Text="Draft anything here" Classes="h3" HorizontalAlignment="Center"/>
+        <TextBlock Text="Hold the hotkey to dictate into a note." Classes="callout muted" HorizontalAlignment="Center"/>
+        <Button Classes="primary" Content="New note" Command="{Binding NewNoteCommand}" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Panel>
+  </Grid>
+</UserControl>

@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+        xmlns:v="using:VoiceFlow.Desktop.Views"
+        x:Class="VoiceFlow.Desktop.Views.FlowBarWindow"
+        x:DataType="vm:FlowBarViewModel"
+        Title="VoiceFlow bar"
+        WindowDecorations="None"
+        Background="Transparent"
+        TransparencyLevelHint="Transparent"
+        Topmost="True" ShowInTaskbar="False" CanResize="False" ShowActivated="False"
+        SizeToContent="WidthAndHeight">
+  <!-- Non-activation (WS_EX_NOACTIVATE) and click-through hit testing are applied at integration. -->
+  <v:FlowBarView Padding="8,16,8,8"/>
+</Window>
