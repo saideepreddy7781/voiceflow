@@ -134,6 +134,16 @@ public class LiveGroqTests(ITestOutputHelper output)
     }
 
     [LiveFact]
+    public async Task MeetingLinesAreRewrittenInTheChosenWriting()
+    {
+        var result = await new TranscriptScriptWriter(new GroqChat(Key), "qwen/qwen3.8-27b")
+            .RewriteAsync([new TranscriptLine(0, Speaker.Others, "నేను రేపు ఆఫీస్ కి వస్తాను")], TeluguScript.Mixed, null);
+        output.WriteLine($"{result.Lines[0].Text} (note: {result.Note ?? "none"})");
+        Assert.Null(result.Note);
+        Assert.Contains("office", result.Lines[0].Text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [LiveFact]
     public async Task MeetingChunkGetsNotes()
     {
         var mic = AudioMath.ReadWav16(Clip("email"));
