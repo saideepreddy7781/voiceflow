@@ -4,8 +4,12 @@
 #   scripts/build-app.sh release    release build
 #   UNIVERSAL=1 scripts/build-app.sh release    one binary for Apple silicon and Intel (for downloads)
 #
-# Signing: uses $SIGN_IDENTITY if set, otherwise the first "Developer ID Application" or
-# "Apple Development" identity in the keychain, otherwise signs ad hoc (local use only).
+# Signing:
+#   SIGN_IDENTITY=<name or SHA-1>   that identity; add SIGN_KEYCHAIN=<path> to look only in one keychain
+#   SIGN_IDENTITY=-                 ad hoc
+#   neither                         a "VoiceFlow Self-Signed" or "Apple Development" identity if the
+#                                   keychain has one, otherwise ad hoc
+# A signing identity keeps macOS permissions across rebuilds. Ad hoc signatures change with every build.
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
@@ -27,21 +31,22 @@ cp "$PKG/Support/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 IDENTITY="${SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then
-  IDENTITY="$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+  # No -v here: find-identity -v hides self-signed certificates that are not trusted.
+  IDENTITY="$(security find-identity -p codesigning | awk '/"VoiceFlow Self-Signed"/ {print $2; exit}')"
 fi
 if [[ -z "$IDENTITY" ]]; then
-  IDENTITY="$(security find-identity -v -p codesigning | awk -F'"' '/Apple Development/ {print $2; exit}')"
+  IDENTITY="$(security find-identity -v -p codesigning | awk '/"Apple Development/ {print $2; exit}')"
 fi
+[[ -n "$IDENTITY" ]] || IDENTITY="-"
 
-if [[ -n "$IDENTITY" ]]; then
-  # Hardened runtime + entitlements are required for notarization; --timestamp for Developer ID.
-  TIMESTAMP=()
-  [[ "$IDENTITY" == Developer\ ID* ]] && TIMESTAMP=(--timestamp)
-  codesign --force --options runtime --entitlements "$ENTITLEMENTS" "${TIMESTAMP[@]}" --sign "$IDENTITY" "$APP"
-  echo "Signed with: $IDENTITY"
+KEYCHAIN_ARGS=()
+[[ -n "${SIGN_KEYCHAIN:-}" ]] && KEYCHAIN_ARGS=(--keychain "$SIGN_KEYCHAIN")
+
+codesign --force --options runtime --entitlements "$ENTITLEMENTS" "${KEYCHAIN_ARGS[@]}" --sign "$IDENTITY" "$APP"
+if [[ "$IDENTITY" == "-" ]]; then
+  echo "Signed ad hoc. macOS permissions reset whenever this build is replaced."
 else
-  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
-  echo "Signed ad hoc (no signing identity found). Others can open it via System Settings → Privacy & Security → Open Anyway."
+  echo "Signed with identity $IDENTITY"
 fi
 
 codesign --verify --strict "$APP"

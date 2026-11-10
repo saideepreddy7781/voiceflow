@@ -15,7 +15,7 @@ cp -R "$ROOT/build/VoiceFlow.app" /Applications/VoiceFlow.app
 
 # An ad-hoc signed rebuild has a new code signature, so macOS's old permission entries no longer
 # match it and only cause "already on but not working" confusion. Clear them so the app asks again.
-if ! codesign -dv /Applications/VoiceFlow.app 2>&1 | grep -q "Authority=Apple Development"; then
+if codesign -dv /Applications/VoiceFlow.app 2>&1 | grep -q "Signature=adhoc"; then
   for service in Accessibility Microphone ListenEvent; do
     tccutil reset "$service" com.saideep.voiceflow >/dev/null 2>&1 || true
   done

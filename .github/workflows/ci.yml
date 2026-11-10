@@ -81,5 +81,11 @@ jobs:
             echo "Possible secret committed."; exit 1
           fi
 
+      - name: No private notes or personal paths in tracked files
+        run: python3 scripts/check_private_strings.py
+
       - name: Cleanup prompt is identical on macOS and Windows
         run: python3 scripts/check_prompt_parity.py
+
+      - name: Homebrew cask is valid Ruby
+        run: ruby -c Casks/voiceflow.rb

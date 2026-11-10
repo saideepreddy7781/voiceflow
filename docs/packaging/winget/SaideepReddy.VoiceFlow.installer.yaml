@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: SaideepReddy.VoiceFlow
+PackageVersion: 0.1.0
+InstallerType: portable
+Commands:
+  - voiceflow
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/saideepreddy7781/voiceflow/releases/download/v0.1.0/VoiceFlow-0.1.0-Windows-x64.exe
+    InstallerSha256: 6191FA00899577CA4C2E1AC60BA2AEC19A2E211874DC137ED639D096CBD5D613
+  - Architecture: arm64
+    InstallerUrl: https://github.com/saideepreddy7781/voiceflow/releases/download/v0.1.0/VoiceFlow-0.1.0-Windows-arm64.exe
+    InstallerSha256: 920EF2D49C1352AC0F5A589E307AF8147F915FAB4C5D0E6C90EBE1355F029B9F
+ManifestType: installer
+ManifestVersion: 1.12.0

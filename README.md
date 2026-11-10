@@ -50,20 +50,21 @@ You also need a free Groq API key from [console.groq.com/keys](https://console.g
 ### Install on macOS
 
 1. Open the DMG and drag VoiceFlow to Applications.
-2. Open VoiceFlow. The builds are not yet signed with an Apple Developer ID, so macOS blocks the first
-   launch. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to
-   VoiceFlow. You only do this once per version.
+2. Open VoiceFlow. The builds are not notarized by Apple, so macOS blocks the first launch. Open
+   **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to VoiceFlow. You
+   only do this once per version.
 3. The welcome window walks you through pasting your Groq key (stored in your Keychain) and allowing the
    **Microphone** and **Accessibility** (needed to notice the dictation key and type into other apps).
 4. Click into any text field, hold **Fn**, and speak.
 
-Because the app is not Developer ID signed, macOS asks for Microphone and Accessibility again after each update.
+Each release's notes say how that build was signed. Self-signed releases keep Microphone and Accessibility
+when you update. Ad hoc releases, including 0.1.0, ask for them again after each update.
 
 ### Install on Windows
 
 1. Download the `.exe` for your PC. It is a single portable program; put it anywhere, for example in
    `C:\Users\<you>\Apps\`, and double-click it.
-2. The builds are not yet code-signed, so SmartScreen shows "Windows protected your PC". Click
+2. The builds are not code-signed, so SmartScreen shows "Windows protected your PC". Click
    **More info → Run anyway**. You only do this once per version.
 3. Paste your Groq key in the welcome window (stored in Windows Credential Manager). VoiceFlow lives in
    the notification area next to the clock.

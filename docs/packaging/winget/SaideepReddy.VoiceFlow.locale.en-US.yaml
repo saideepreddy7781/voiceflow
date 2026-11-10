@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
+
+PackageIdentifier: SaideepReddy.VoiceFlow
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Saideep Reddy
+PublisherUrl: https://github.com/saideepreddy7781
+PublisherSupportUrl: https://github.com/saideepreddy7781/voiceflow/issues
+PackageName: VoiceFlow
+PackageUrl: https://github.com/saideepreddy7781/voiceflow
+License: MIT
+LicenseUrl: https://github.com/saideepreddy7781/voiceflow/blob/main/LICENSE
+ShortDescription: Voice typing for Windows. Hold a key, speak, and clean text appears in any app.
+Description: VoiceFlow turns speech into cleaned-up text in any app. You bring your own free Groq API key. It has no accounts, servers or analytics.
+Moniker: voiceflow
+Tags:
+  - dictation
+  - speech-to-text
+  - voice-typing
+  - whisper
+ReleaseNotesUrl: https://github.com/saideepreddy7781/voiceflow/releases/tag/v0.1.0
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0

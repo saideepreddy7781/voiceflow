@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/saideepreddy7781/voiceflow/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
+  - name: Getting help
+    url: https://github.com/saideepreddy7781/voiceflow/blob/main/SUPPORT.md
+    about: Common questions about installing and permissions.

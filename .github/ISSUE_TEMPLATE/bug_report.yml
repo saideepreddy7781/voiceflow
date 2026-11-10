@@ -1,0 +1,50 @@
+name: Bug report
+description: Something doesn't work the way it should.
+labels: [bug]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Windows x64
+        - Windows on Arm
+    validations:
+      required: true
+  - type: textarea
+    id: debug-report
+    attributes:
+      label: Debug report
+      description: >-
+        In VoiceFlow, open Settings, click "Copy debug report" and paste it here. It doesn't include anything
+        you dictated or typed. If your version doesn't have that button, write your VoiceFlow version and your
+        OS version.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Click into a text field in ...
+        2. Hold the hotkey and say ...
+        3. ...
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This report has no API keys or private text in it.
+          required: true
