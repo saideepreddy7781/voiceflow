@@ -10,6 +10,8 @@ enum AppLinks {
     static var docs: URL { repository.appending(path: "blob/main/README.md") }
     static let groqKeys = URL(string: "https://console.groq.com/keys")!
     static let groqPrivacy = URL(string: "https://groq.com/privacy-policy/")!
+    static let groqDataControls = URL(string: "https://console.groq.com/settings/data-controls")!
+    static let groqDataPolicy = URL(string: "https://console.groq.com/docs/your-data")!
 }
 
 /// Opens the Hub, Settings, onboarding, Scratchpad and Help windows from anywhere.
@@ -49,7 +51,7 @@ final class WindowManager {
     func showHub(_ page: HubPage = .home) {
         guard let model else { return }
         hubSelection.page = page
-        show("hub", title: "VoiceFlow", size: NSSize(width: 980, height: 680), minSize: NSSize(width: 820, height: 560)) {
+        show("hub", title: "VoiceFlow", size: NSSize(width: 1100, height: 740), minSize: NSSize(width: 860, height: 560), hideTitle: true) {
             HubView(model: model, selection: self.hubSelection)
         }
     }
@@ -57,7 +59,7 @@ final class WindowManager {
     func showSettings(_ section: SettingsSection = .general) {
         guard let model else { return }
         settingsSelection.section = section
-        show("settings", title: "Settings", size: NSSize(width: 760, height: 560), minSize: NSSize(width: 680, height: 480)) {
+        show("settings", title: "Settings", size: NSSize(width: 860, height: 620), minSize: NSSize(width: 740, height: 500)) {
             SettingsView(model: model, selection: self.settingsSelection)
         }
     }
@@ -71,7 +73,7 @@ final class WindowManager {
 
     func showHelp() {
         guard let model else { return }
-        show("help", title: "VoiceFlow Help", size: NSSize(width: 560, height: 520), resizable: false) {
+        show("help", title: "VoiceFlow Help", size: NSSize(width: 620, height: 600), resizable: false) {
             HelpView(model: model)
         }
     }
@@ -99,7 +101,7 @@ final class WindowManager {
         showHub(.home)
     }
 
-    private func show<Content: View>(_ id: String, title: String, size: NSSize, minSize: NSSize? = nil, resizable: Bool = true,
+    private func show<Content: View>(_ id: String, title: String, size: NSSize, minSize: NSSize? = nil, resizable: Bool = true, hideTitle: Bool = false,
                                      @ViewBuilder content: () -> Content) {
         if windows[id] == nil {
             var style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
@@ -107,6 +109,8 @@ final class WindowManager {
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: style, backing: .buffered, defer: false)
             window.title = title
             window.titlebarAppearsTransparent = true
+            // Pages have their own titles; a second one in the toolbar is noise.
+            if hideTitle { window.titleVisibility = .hidden }
             window.isReleasedWhenClosed = false
             // Open on the desktop (Space) you're using now, not the one VoiceFlow's window was last on.
             window.collectionBehavior.insert(.moveToActiveSpace)
@@ -136,6 +140,7 @@ final class MicTester {
     private(set) var error: String?
 
     func start(deviceUID: String) {
+        guard !AppRuntime.isDemo else { return }
         stop()
         do {
             try recorder.start(deviceUID: deviceUID.isEmpty ? nil : deviceUID)
@@ -158,25 +163,5 @@ final class MicTester {
         if recorder.isRecording { recorder.stop() }
         running = false
         level = 0
-    }
-}
-
-/// White level bars, like the Flow bar's, driven by a single level value.
-struct LevelMeter: View {
-    let level: Float
-    var bars = 24
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<bars, id: \.self) { i in
-                let mid = Float(bars) / 2
-                let falloff = 1 - abs(Float(i) - mid) / (mid + 2)
-                Capsule()
-                    .fill(Color.primary.opacity(0.85))
-                    .frame(width: 4, height: max(4, CGFloat(level * falloff) * 44))
-            }
-        }
-        .frame(height: 48)
-        .animation(.linear(duration: 0.08), value: level)
     }
 }

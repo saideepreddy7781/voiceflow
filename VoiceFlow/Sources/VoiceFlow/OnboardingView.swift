@@ -6,20 +6,31 @@ import VoiceFlowCore
 struct OnboardingView: View {
     @Bindable var model: AppModel
     let done: () -> Void
-    @State private var step = 0
+    @State private var step: Int
     @State private var tester = MicTester()
 
     private let steps = ["Connect", "Permissions", "Microphone", "Shortcut", "Languages", "Try it", "See the difference", "Done"]
 
+    init(model: AppModel, initialStep: Int = 0, done: @escaping () -> Void) {
+        self.model = model
+        self.done = done
+        _step = State(initialValue: initialStep)
+    }
+
+    private var hotkey: String { model.preferences.hotkey.shortName.lowercased() }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 6) {
-                ForEach(steps.indices, id: \.self) { i in
-                    Capsule().fill(i <= step ? Color.accentColor : Color.secondary.opacity(0.25)).frame(height: 4)
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                HStack(spacing: 6) {
+                    ForEach(steps.indices, id: \.self) { i in
+                        Capsule().fill(i <= step ? Palette.primary : Palette.track).frame(height: 4)
+                    }
                 }
+                .accessibilityHidden(true)
+                Text("Step \(step + 1) of \(steps.count) · \(steps[step])").font(TypeScale.caption).foregroundStyle(Palette.muted)
             }
-            .padding(.top, 10)
-            Text("Step \(step + 1) of \(steps.count) · \(steps[step])").font(.caption).foregroundStyle(.secondary)
+            .padding(.top, Spacing.xs)
 
             Group {
                 switch step {
@@ -35,22 +46,29 @@ struct OnboardingView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-            HStack {
-                if step > 0 && step < steps.count - 1 { Button("Back") { go(step - 1) } }
+            HStack(spacing: Spacing.xs) {
+                if step > 0 && step < steps.count - 1 {
+                    Button("Back") { go(step - 1) }.buttonStyle(.vfSecondary)
+                }
                 Spacer()
-                if step == 5 || step == 6 { Button("Skip") { go(step + 1) } }
+                if step == 5 || step == 6 {
+                    Button("Skip") { go(step + 1) }.buttonStyle(.vfSecondary)
+                }
                 if step < steps.count - 1 {
                     Button("Continue") { go(step + 1) }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.vfPrimary)
                         .keyboardShortcut(.defaultAction)
                         .disabled(!canContinue)
                 } else {
-                    Button("Explore VoiceFlow") { done() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    Button("Explore VoiceFlow") { done() }.buttonStyle(.vfPrimary).keyboardShortcut(.defaultAction)
                 }
             }
         }
-        .padding(32)
+        .padding(.horizontal, Spacing.xxl).padding(.top, Spacing.lg).padding(.bottom, Spacing.lg)
         .frame(width: 760, height: 600)
+        .background(Palette.window)
+        .tint(Palette.primary)
+        .focusEffectDisabled()
         .onDisappear { tester.stop() }
     }
 
@@ -68,59 +86,66 @@ struct OnboardingView: View {
         }
     }
 
+    private func stepTitle(_ text: String) -> some View {
+        Text(text).font(TypeScale.pageTitle).foregroundStyle(Palette.foreground).accessibilityAddTraits(.isHeader)
+    }
+
     // 1. Connect (stands in for sign-in: VoiceFlow has no accounts)
     private var connect: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 14) {
-                LogoMark(size: 56)
-                Text("Speak. VoiceFlow types.").font(.system(size: 30, weight: .bold))
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            HStack(spacing: Spacing.md) {
+                LogoMark(size: 48)
+                stepTitle("Speak. VoiceFlow types.")
             }
             Text("Hold a key in any app, talk, and let go. VoiceFlow writes what you meant: filler words gone, your corrections applied, punctuation and lists in place.")
-                .font(.title3).foregroundStyle(.secondary)
-            Divider().padding(.vertical, 4)
-            Text("Connect Groq").font(.title3.bold())
+                .font(TypeScale.body).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            RowDivider().padding(.vertical, Spacing.xxs)
+            Text("Connect Groq").font(TypeScale.sectionTitle).foregroundStyle(Palette.foreground)
             Text("VoiceFlow uses Groq for speech recognition and cleanup with your own free key. No account with VoiceFlow is needed.")
-                .foregroundStyle(.secondary)
-            Button("Get a free key at console.groq.com") { NSWorkspace.shared.open(AppLinks.groqKeys) }
-            KeyRow(model: model, key: .groq)
+                .font(TypeScale.callout).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            Card(padding: Spacing.md) {
+                KeyRow(model: model, key: .groq)
+            }
+            ZeroDataRetentionNote()
         }
     }
 
     // 2. Permission cards
     private var permissions: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Two permissions").font(.system(size: 26, weight: .bold))
-            PermissionCard(symbol: "mic.fill", title: "Microphone",
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            stepTitle("Two permissions")
+            PermissionCard(symbol: "mic", title: "Microphone",
                            detail: "Used only while you hold the dictation key or use hands-free mode.",
                            granted: model.microphoneStatus == .authorized) { model.requestMicrophone() }
             PermissionCard(symbol: "accessibility", title: "Accessibility",
                            detail: "Lets VoiceFlow notice the dictation key, read the field you're typing in, and type into it. Your other keystrokes are never recorded.",
                            granted: model.hasAccessibility) { model.requestAccessibility() }
             if !model.hasAccessibility {
-                Text("Already switched on but still shown here? Switch VoiceFlow off and on again in the list, or relaunch.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Button("Relaunch VoiceFlow") { model.relaunch() }
+                HelpText("Already switched on but still shown here? Switch VoiceFlow off and on again in the list, or relaunch.")
+                Button("Relaunch VoiceFlow") { model.relaunch() }.buttonStyle(.vf(.secondary, compact: true))
             }
         }
     }
 
     // 3. Mic test
     private var microphone: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Test your microphone").font(.system(size: 26, weight: .bold))
-            Text("Say something. The bars should move with your voice.").foregroundStyle(.secondary)
-            LevelMeter(level: tester.level)
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            stepTitle("Test your microphone")
+            Text("Say something. The bars should move with your voice.").font(TypeScale.body).foregroundStyle(Palette.muted)
+            LevelMeter(level: AppRuntime.isDemo ? 0.7 : tester.level)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
-                .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.05)))
-            Picker("Microphone", selection: $model.preferences.inputDeviceUID) {
-                Text("System default").tag("")
-                ForEach(model.inputDevices) { Text($0.name).tag($0.uid) }
+                .padding(.vertical, Spacing.lg)
+                .cardSurface()
+            SettingRow(title: "Microphone") {
+                Picker("Microphone", selection: $model.preferences.inputDeviceUID) {
+                    Text("System default").tag("")
+                    ForEach(model.inputDevices) { Text($0.name).tag($0.uid) }
+                }
+                .labelsHidden().fixedSize()
+                .onChange(of: model.preferences.inputDeviceUID) { _, uid in tester.start(deviceUID: uid) }
             }
-            .onChange(of: model.preferences.inputDeviceUID) { _, uid in tester.start(deviceUID: uid) }
-            if let error = tester.error { Text(error).foregroundStyle(.red).font(.callout) }
-            Text("Bars not moving? Pick another microphone, or check that no other app is using it.")
-                .font(.callout).foregroundStyle(.secondary)
+            if let error = tester.error { AttentionLine(text: error) }
+            HelpText("Bars not moving? Pick another microphone, or check that no other app is using it.")
         }
         .onAppear {
             model.refreshInputDevices()
@@ -130,74 +155,82 @@ struct OnboardingView: View {
 
     // 4. Shortcut
     private var shortcut: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Your shortcut").font(.system(size: 26, weight: .bold))
-            Picker("Dictation key", selection: $model.preferences.hotkey) {
-                ForEach(Hotkey.allCases) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            HStack(alignment: .top, spacing: 14) {
-                Card {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Push to talk").font(.headline)
-                        HStack { Text("Hold"); KeyCap(text: model.preferences.hotkey.shortName.lowercased()); Text(", speak, let go.") }
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            stepTitle("Your shortcut")
+            TabStrip(items: Hotkey.allCases, title: \.displayName, selection: $model.preferences.hotkey)
+            HStack(alignment: .top, spacing: Spacing.sm) {
+                Card(padding: Spacing.md, fillsHeight: true) {
+                    VStack(alignment: .leading, spacing: Spacing.xs) {
+                        SectionHeading(text: "Push to talk")
+                        HStack(spacing: Spacing.xs) {
+                            Text("Hold"); KeyCap(text: hotkey); Text("and speak. Let go to finish.")
+                        }
+                        .font(TypeScale.callout).foregroundStyle(Palette.muted)
                     }
                 }
-                Card {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Hands-free").font(.headline)
-                        HStack { KeyCap(text: model.preferences.hotkey.shortName.lowercased() + " + space"); Text("or double-tap.") }
-                        Text("Press again to finish.").foregroundStyle(.secondary)
+                Card(padding: Spacing.md, fillsHeight: true) {
+                    VStack(alignment: .leading, spacing: Spacing.xs) {
+                        SectionHeading(text: "Hands-free")
+                        HStack(spacing: Spacing.xs) {
+                            KeyCap(text: hotkey + " + space"); Text("or double-tap.")
+                        }
+                        .font(TypeScale.callout).foregroundStyle(Palette.muted)
+                        Text("Press again to finish.").font(TypeScale.callout).foregroundStyle(Palette.muted)
                     }
                 }
             }
-            Card {
-                HStack {
-                    Image(systemName: model.pill.phase == .idle ? "keyboard" : "checkmark.circle.fill")
-                        .foregroundStyle(model.pill.phase == .idle ? Color.secondary : Color.green)
-                        .font(.title2)
-                    Text(model.pill.phase == .idle ? "Try it: hold \(model.preferences.hotkey.shortName.lowercased()) now. The bar appears at the bottom of your screen."
+            .fixedSize(horizontal: false, vertical: true)
+            Card(padding: Spacing.md) {
+                HStack(spacing: Spacing.sm) {
+                    Image(systemName: model.pill.phase == .idle ? "keyboard" : "checkmark.circle")
+                        .font(.system(size: 18))
+                        .foregroundStyle(model.pill.phase == .idle ? Palette.muted : Palette.foreground)
+                        .accessibilityHidden(true)
+                    Text(model.pill.phase == .idle ? "Try it: hold \(hotkey) now. The bar appears at the bottom of your screen."
                                                    : "Got it. Release to finish.")
+                        .font(TypeScale.callout).foregroundStyle(Palette.foreground)
                 }
             }
             if model.fnKeyNeedsChange {
-                Text("Your 🌐 key opens another macOS feature. Allow Accessibility (previous step) so VoiceFlow can take over the key, or set it to Do Nothing in Keyboard settings.")
-                    .font(.callout).foregroundStyle(.orange)
+                AttentionLine(text: "Your 🌐 key opens another macOS feature. Allow Accessibility (previous step) so VoiceFlow can take over the key, or set it to Do Nothing in Keyboard settings.")
             }
         }
     }
 
     // 5. Languages and privacy
     private var languages: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Languages and privacy").font(.system(size: 26, weight: .bold))
+        VerticalScroll {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                stepTitle("Languages and privacy")
                 Text("Pick the languages you speak. One language is most accurate; with several, VoiceFlow detects which one you're using.")
-                    .foregroundStyle(.secondary)
+                    .font(TypeScale.body).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
                 LanguagePicker(selection: $model.preferences.languages)
                 if model.preferences.speaksTelugu {
-                    TeluguWritingPicker(selection: $model.preferences.teluguScript)
+                    ScriptPicker(title: "Write Telugu as", selection: $model.preferences.teluguScript, name: \.displayName, example: \.example)
                 }
                 if model.preferences.speaksHindi {
-                    HindiWritingPicker(selection: $model.preferences.hindiScript)
+                    ScriptPicker(title: "Write Hindi as", selection: $model.preferences.hindiScript, name: \.displayName, example: \.example)
                 }
-                Divider().padding(.vertical, 4)
-                Picker("Keep my transcripts", selection: $model.preferences.historyRetentionDays) {
-                    Text("30 days").tag(30)
-                    Text("7 days").tag(7)
-                    Text("Forever").tag(-1)
-                    Text("Never store my data").tag(0)
+                RowDivider().padding(.vertical, Spacing.xxs)
+                SettingRow(title: "Keep my transcripts") {
+                    Picker("Keep my transcripts", selection: $model.preferences.historyRetentionDays) {
+                        Text("30 days").tag(30)
+                        Text("7 days").tag(7)
+                        Text("Forever").tag(-1)
+                        Text("Never store my data").tag(0)
+                    }
+                    .labelsHidden().fixedSize()
                 }
-                Text("What leaves your Mac: audio while you dictate and the text needed to clean it up, sent to Groq with your key. Nothing from password fields or password managers. History stays on this Mac.")
-                    .font(.callout).foregroundStyle(.secondary)
+                HelpText("What leaves your Mac: audio while you dictate and the text needed to clean it up, sent to Groq with your key. Nothing from password fields or password managers. History stays on this Mac.")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     // 7. Before and after
     private var transform: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("See the difference").font(.system(size: 26, weight: .bold))
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            stepTitle("See the difference")
             BeforeAfter(said: "um so let's meet on tuesday no actually wednesday at uh three",
                         typed: "Let's meet on Wednesday at 3.", label: "Corrections and fillers")
             BeforeAfter(said: "i need three things milk eggs and bread",
@@ -211,12 +244,13 @@ struct OnboardingView: View {
 
     // 8. Done
     private var finish: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("You're all set").font(.system(size: 30, weight: .bold))
-            Text("Hold \(model.preferences.hotkey.shortName.lowercased()) in any app to dictate. The Flow bar at the bottom of your screen shows when VoiceFlow is listening.")
-                .font(.title3).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            LogoMark(size: 64).padding(.bottom, Spacing.xs)
+            stepTitle("You're all set")
+            Text("Hold \(hotkey) in any app to dictate. The Flow bar at the bottom of your screen shows when VoiceFlow is listening.")
+                .font(TypeScale.body).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
             if !model.setupProblems.isEmpty {
-                Text("Still needed: " + model.setupProblems.joined(separator: ", ")).foregroundStyle(.orange)
+                AttentionLine(text: "Still needed: " + model.setupProblems.joined(separator: ", "))
             }
         }
     }
@@ -230,23 +264,25 @@ private struct PermissionCard: View {
     let request: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: symbol).font(.title2).frame(width: 36, height: 36)
-                .background(Circle().fill(Color.accentColor.opacity(0.15)))
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.headline)
-                Text(detail).font(.callout).foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: Spacing.md) {
+            Image(systemName: symbol).font(.system(size: 16)).foregroundStyle(Palette.foreground)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Palette.selected))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                Text(title).font(TypeScale.cardTitle).foregroundStyle(Palette.foreground)
+                HelpText(detail)
             }
-            Spacer()
+            Spacer(minLength: Spacing.sm)
             if granted {
-                Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Label("Allowed", systemImage: "checkmark.circle").font(TypeScale.callout).foregroundStyle(Palette.muted)
             } else {
-                Button("Allow", action: request).buttonStyle(.borderedProminent)
+                Button("Allow", action: request).buttonStyle(.vfPrimary)
             }
         }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(granted ? Color.green.opacity(0.5) : Color.primary.opacity(0.1)))
+        .padding(Spacing.md)
+        .cardSurface()
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -256,68 +292,76 @@ private struct BeforeAfter: View {
     let label: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("You said").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(said).font(.callout).foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: Spacing.sm) {
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                Text("You said").font(TypeScale.label).foregroundStyle(Palette.muted)
+                Text(said).font(TypeScale.callout).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "arrow.right").foregroundStyle(.secondary).padding(.top, 14)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(label).font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
-                Text(typed).font(.callout)
+            Image(systemName: "arrow.right").font(.system(size: 11)).foregroundStyle(Palette.subtle).padding(.top, Spacing.md).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                Text(label).font(TypeScale.label).foregroundStyle(Palette.foreground)
+                Text(typed).font(TypeScale.callout).foregroundStyle(Palette.foreground).fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
+        .padding(Spacing.sm + 2)
+        .cardSurface()
     }
+}
+
+private enum PracticeTab: Int, CaseIterable, Identifiable {
+    case email, notes
+    var id: Int { rawValue }
+    var title: String { self == .email ? "Email" : "Notes" }
 }
 
 /// Practice dictating into a mock email and a mock notes page.
 private struct PracticeArea: View {
     let model: AppModel
-    @State private var tab = 0
+    @State private var tab: PracticeTab = .email
     @State private var to = "priya@example.com"
     @State private var subject = "Proposal"
     @State private var emailBody = ""
     @State private var notes = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Try it yourself").font(.system(size: 26, weight: .bold))
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            Text("Try it yourself").font(TypeScale.pageTitle).foregroundStyle(Palette.foreground).accessibilityAddTraits(.isHeader)
             Text("Click into the text, hold \(model.preferences.hotkey.shortName.lowercased()), and say the line below. Let go and watch it appear.")
-                .foregroundStyle(.secondary)
-            Picker("", selection: $tab) {
-                Text("Email").tag(0)
-                Text("Notes").tag(1)
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                .font(TypeScale.body).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            TabStrip(items: PracticeTab.allCases, title: \.title, selection: $tab)
 
-            if tab == 0 {
+            if tab == .email {
                 Text("Say: “Hi Priya, um, thanks for the proposal. I'll review it by Tuesday, no actually Wednesday.”")
-                    .font(.callout.italic())
+                    .font(TypeScale.callout.italic()).foregroundStyle(Palette.foreground)
                 VStack(spacing: 0) {
                     MockField(label: "To", text: $to)
-                    Divider()
+                    RowDivider()
                     MockField(label: "Subject", text: $subject)
-                    Divider()
-                    TextEditor(text: $emailBody).font(.body).padding(8).frame(minHeight: 180)
-                        .scrollContentBackground(.hidden)
+                    RowDivider()
+                    practiceEditor($emailBody, prompt: "Your email").padding(Spacing.xs).frame(minHeight: 140)
                 }
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.15)))
+                .cardSurface(radius: Radius.overlay)
             } else {
                 Text("Say: “Things to do this week, first finish the deck, second call the bank, third book train tickets.”")
-                    .font(.callout.italic())
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Weekly plan").font(.title2.bold())
-                    TextEditor(text: $notes).font(.body).frame(minHeight: 200).scrollContentBackground(.hidden)
+                    .font(TypeScale.callout.italic()).foregroundStyle(Palette.foreground)
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text("Weekly plan").font(TypeScale.sectionTitle).foregroundStyle(Palette.foreground)
+                    practiceEditor($notes, prompt: "Your notes").frame(minHeight: 160)
                 }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.15)))
+                .padding(Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardSurface(radius: Radius.overlay)
             }
+        }
+    }
+
+    @ViewBuilder private func practiceEditor(_ text: Binding<String>, prompt: String) -> some View {
+        if AppRuntime.isDemo {
+            Color.clear
+        } else {
+            TextEditor(text: text).font(TypeScale.body).scrollContentBackground(.hidden).accessibilityLabel(prompt)
         }
     }
 }
@@ -326,10 +370,11 @@ private struct MockField: View {
     let label: String
     @Binding var text: String
     var body: some View {
-        HStack {
-            Text(label).foregroundStyle(.secondary).frame(width: 60, alignment: .leading)
-            TextField("", text: $text).textFieldStyle(.plain)
+        HStack(spacing: Spacing.xs) {
+            Text(label).font(TypeScale.callout).foregroundStyle(Palette.muted).frame(width: 60, alignment: .leading)
+            TextField("", text: $text).textFieldStyle(.plain).font(TypeScale.callout).foregroundStyle(Palette.foreground)
+                .accessibilityLabel(label)
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
+        .padding(.horizontal, Spacing.sm).padding(.vertical, Spacing.xs)
     }
 }

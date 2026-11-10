@@ -180,6 +180,12 @@ public struct Preferences: Equatable, Codable, Sendable {
     public var debugLogging: Bool = false
     public var onboarded: Bool = false
 
+    // Updates
+    /// Ask GitHub for the latest release at launch and once a day.
+    public var checkForUpdates: Bool = true
+    /// The release whose notice was dismissed on Home. A newer release shows again.
+    public var dismissedUpdateVersion: String = ""
+
     public init() {}
 
     public func style(for category: StyleCategory) -> WritingStyle {
@@ -206,6 +212,7 @@ public struct Preferences: Equatable, Codable, Sendable {
         case inputDeviceUID, whisperMode, muteAudioWhileDictating, playSounds
         case meetingsDetect, meetingsSystemAudio, meetingsFolder, meetingsNotesLanguage, meetingsUseCalendar, meetingsConsentReminder
         case showBarWhenIdle, showInDock, historyRetentionDays, launchAtLogin, debugLogging, onboarded
+        case checkForUpdates, dismissedUpdateVersion
         // Older versions
         case language, cleanupEnabled
     }
@@ -253,6 +260,8 @@ public struct Preferences: Equatable, Codable, Sendable {
         launchAtLogin = value(.launchAtLogin, d.launchAtLogin)
         debugLogging = value(.debugLogging, d.debugLogging)
         onboarded = value(.onboarded, d.onboarded)
+        checkForUpdates = value(.checkForUpdates, d.checkForUpdates)
+        dismissedUpdateVersion = value(.dismissedUpdateVersion, d.dismissedUpdateVersion)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -286,6 +295,8 @@ public struct Preferences: Equatable, Codable, Sendable {
         try c.encode(launchAtLogin, forKey: .launchAtLogin)
         try c.encode(debugLogging, forKey: .debugLogging)
         try c.encode(onboarded, forKey: .onboarded)
+        try c.encode(checkForUpdates, forKey: .checkForUpdates)
+        try c.encode(dismissedUpdateVersion, forKey: .dismissedUpdateVersion)
     }
 }
 

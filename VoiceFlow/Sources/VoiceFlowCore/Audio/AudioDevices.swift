@@ -5,6 +5,12 @@ public struct AudioInputDevice: Identifiable, Hashable, Sendable {
     public let id: AudioDeviceID
     public let uid: String
     public let name: String
+
+    public init(id: AudioDeviceID = 0, uid: String, name: String) {
+        self.id = id
+        self.uid = uid
+        self.name = name
+    }
 }
 
 /// Input device listing and the system output mute used while dictating.

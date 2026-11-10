@@ -1,7 +1,7 @@
 # What VoiceFlow sends, stores and reads
 
-VoiceFlow has no servers, no accounts and no analytics. It talks to Groq with your own API key, and to
-Perplexity only when you ask Command Mode to search.
+VoiceFlow has no servers, no accounts and no analytics. It talks to Groq with your own API key, to GitHub
+to see whether a newer release exists, and to Perplexity only when you ask Command Mode to search.
 
 ## Sent to Groq (`api.groq.com`, over HTTPS)
 
@@ -42,6 +42,12 @@ tell everyone on the call. VoiceFlow reminds you each time unless you turn the r
 
 Only when Command Mode decides your instruction is a web search ("search for…"): your browser opens
 `https://www.perplexity.ai/search?q=…` with the query.
+
+## Sent to GitHub (`api.github.com`, over HTTPS)
+
+At launch and once a day, the app asks `api.github.com` for the latest VoiceFlow release so it can show a notice
+with a link to the release page. The request carries no account, key, dictation or anything else about you, and
+nothing is downloaded. Turn it off under Settings → About.
 
 ## Never read or sent
 
