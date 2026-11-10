@@ -3,6 +3,8 @@ import Foundation
 public enum ProviderError: Error, Equatable, CustomStringConvertible {
     case missingKey
     case rateLimited(retryAfter: Double?)
+    /// A per-day limit: waiting a minute won't help. `resource` is what ran out, in plain words.
+    case dailyLimit(resource: String, retryAfter: Double?)
     case http(Int, String)
     case network(String)
     case badResponse
@@ -11,10 +13,18 @@ public enum ProviderError: Error, Equatable, CustomStringConvertible {
         switch self {
         case .missingKey: "No Groq key saved. Add it in Settings."
         case .rateLimited: "Groq rate limit reached. Try again in a moment."
+        case .dailyLimit(let resource, let retryAfter):
+            "Groq's free daily limit for \(resource) ran out." + (retryAfter.map { " It resets \(Self.relative($0))." } ?? " It resets within a day.")
         case .http(let code, let body): "Groq returned HTTP \(code). \(body.prefix(160))"
         case .network(let message): "Network problem: \(message)"
         case .badResponse: "Groq sent a response VoiceFlow could not read."
         }
+    }
+
+    private static func relative(_ seconds: Double) -> String {
+        if seconds < 90 { return "in about a minute" }
+        if seconds < 5_400 { return "in about \(Int((seconds / 60).rounded())) minutes" }
+        return "in about \(Int((seconds / 3_600).rounded())) hours"
     }
 }
 
@@ -24,10 +34,37 @@ public protocol Transcriber: Sendable {
 
 /// A transcription with the detected language and timed segments (Whisper's verbose_json).
 public struct DetailedTranscript: Sendable, Equatable {
+    public struct Word: Sendable, Equatable {
+        public var word: String
+        public var start: Double
+        public var end: Double
+
+        public init(word: String, start: Double, end: Double) {
+            self.word = word
+            self.start = start
+            self.end = end
+        }
+    }
+
     public struct Segment: Sendable, Equatable {
         public var start: Double
         public var end: Double
         public var text: String
+        public var avgLogprob: Double?
+        public var noSpeechProb: Double?
+        public var compressionRatio: Double?
+        public var words: [Word] = []
+
+        public init(start: Double, end: Double, text: String, avgLogprob: Double? = nil, noSpeechProb: Double? = nil,
+                    compressionRatio: Double? = nil, words: [Word] = []) {
+            self.start = start
+            self.end = end
+            self.text = text
+            self.avgLogprob = avgLogprob
+            self.noSpeechProb = noSpeechProb
+            self.compressionRatio = compressionRatio
+            self.words = words
+        }
     }
     public var text: String
     /// Whisper language code, when Whisper reported one.
@@ -44,19 +81,30 @@ public struct DetailedTranscript: Sendable, Equatable {
     }
 }
 
+/// How to get a transcript when several languages are in play.
+public enum ResolveMode: Sendable, Equatable {
+    /// Auto-detect and forced opinions at once (dictation: fastest).
+    case parallel
+    /// Auto-detect, then forced opinions only if it looks wrong (meetings: cheapest).
+    /// `hint` starts with a forced language instead when the stream has been in one language for a while.
+    case sequential(hint: String?)
+}
+
 /// Groq Whisper (`/audio/transcriptions`, OpenAI-compatible).
 public struct GroqTranscriber: Transcriber {
     let apiKey: String
     let model: String
     let fallbackModel: String?
     let session: URLSession
+    let gate: GroqGate
 
     public init(apiKey: String, model: String = "whisper-large-v3-turbo", fallbackModel: String? = "whisper-large-v3",
-                session: URLSession = .shared) {
+                session: URLSession = .shared, gate: GroqGate = .shared) {
         self.apiKey = apiKey
         self.model = model
         self.fallbackModel = fallbackModel == model ? nil : fallbackModel
         self.session = session
+        self.gate = gate
     }
 
     public func transcribe(wav: Data, language: String?, prompt: String?) async throws -> String {
@@ -72,58 +120,86 @@ public struct GroqTranscriber: Transcriber {
             case .http, .network, .badResponse:
                 guard let fallbackModel else { throw error }
                 return try await request(wav: wav, model: fallbackModel, language: language, prompt: prompt)
-            case .missingKey:
+            case .missingKey, .dailyLimit:
                 throw error
             }
         }
     }
 
-    /// For speakers of several languages: auto-detect and, in parallel, the given language; then the
-    /// better result (see `LanguageResolver`). With `parallelLanguage` nil this is one request.
-    ///
-    /// `sequential` (meetings): ask for the second language only when auto-detect looks wrong, which halves
-    /// the audio counted against Groq's hourly limit for a long meeting.
-    public func transcribeResolving(wav: Data, language: String?, parallelLanguage: String?, languages: [String],
-                                    prompt: String?, sequential: Bool = false) async throws -> DetailedTranscript {
-        guard language == nil, let parallelLanguage else {
-            return try await transcribeDetailed(wav: wav, language: language, prompt: prompt)
+    /// The transcript for one piece of audio, for speakers of one or more languages (see `LanguageResolver`).
+    public func transcribeResolving(wav: Data, plan: LanguagePlan, prompts: WhisperPrompts,
+                                    mode: ResolveMode = .parallel, priority: GroqPriority = .interactive,
+                                    wordTimestamps: Bool = false) async throws -> DetailedTranscript {
+        func run(_ language: String?) async throws -> DetailedTranscript {
+            try await transcribeDetailed(wav: wav, language: language, prompt: prompts.text(forLanguage: language),
+                                         priority: priority, wordTimestamps: wordTimestamps)
         }
-        if sequential {
-            let auto = try await transcribeDetailed(wav: wav, language: nil, prompt: prompt)
-            guard LanguageResolver.needsSecondOpinion(auto, languages: languages) else { return auto }
-            let forced = try? await transcribeDetailed(wav: wav, language: parallelLanguage, prompt: prompt)
-            return LanguageResolver.choose(auto: auto, forced: forced, forcedLanguage: parallelLanguage, languages: languages)
+        if let forced = plan.forcedFirst {
+            return WhisperSegmentFilter.filtered(try await run(forced))
         }
-        async let auto = transcribeDetailed(wav: wav, language: nil, prompt: prompt)
-        async let forced = transcribeDetailed(wav: wav, language: parallelLanguage, prompt: prompt)
-        let forcedResult = try? await forced
+        guard !plan.languages.isEmpty else {
+            return WhisperSegmentFilter.filtered(try await run(nil))
+        }
+
+        if case .sequential(let hint) = mode {
+            if let hint {
+                let hinted = try await run(hint)
+                if LanguageResolver.forcedResultAcceptable(hinted) { return WhisperSegmentFilter.filtered(hinted) }
+                // The sticky language no longer fits; fall through to a full look.
+            }
+            let auto = try await run(nil)
+            let languages = LanguageResolver.opinionLanguages(after: auto, plan: plan)
+            guard !languages.isEmpty else { return WhisperSegmentFilter.filtered(auto) }
+            var opinions: [LanguageOpinion] = []
+            for language in languages {
+                if let t = try? await run(language) { opinions.append(LanguageOpinion(language: language, transcript: t)) }
+            }
+            return WhisperSegmentFilter.filtered(LanguageResolver.choose(auto: auto, opinions: opinions, plan: plan))
+        }
+
+        let languages = Array(plan.opinionCandidates.prefix(LanguageResolver.maxOpinions))
+        async let auto = run(nil)
+        var opinions: [LanguageOpinion] = []
+        await withTaskGroup(of: LanguageOpinion?.self) { group in
+            for language in languages {
+                group.addTask {
+                    guard let t = try? await run(language) else { return nil }
+                    return LanguageOpinion(language: language, transcript: t)
+                }
+            }
+            for await opinion in group { if let opinion { opinions.append(opinion) } }
+        }
         let autoResult: DetailedTranscript
         do {
             autoResult = try await auto
         } catch {
-            // Auto-detect failed but the forced language worked: use it rather than losing the speech.
-            if let forcedResult { return forcedResult }
+            // Auto-detect failed but a forced language worked: use it rather than losing the speech.
+            if let best = opinions.max(by: { ($0.transcript.confidence ?? -10) < ($1.transcript.confidence ?? -10) }) {
+                return WhisperSegmentFilter.filtered(best.transcript)
+            }
             throw error
         }
-        return LanguageResolver.choose(auto: autoResult, forced: forcedResult, forcedLanguage: parallelLanguage, languages: languages)
+        return WhisperSegmentFilter.filtered(LanguageResolver.choose(auto: autoResult, opinions: opinions, plan: plan))
     }
 
     /// Text, detected language and timed segments.
-    public func transcribeDetailed(wav: Data, language: String?, prompt: String?) async throws -> DetailedTranscript {
+    public func transcribeDetailed(wav: Data, language: String?, prompt: String?, priority: GroqPriority = .interactive,
+                                   wordTimestamps: Bool = false) async throws -> DetailedTranscript {
         do {
-            return try await detailedRequest(wav: wav, model: model, language: language, prompt: prompt)
+            return try await detailedRequest(wav: wav, model: model, language: language, prompt: prompt, priority: priority, wordTimestamps: wordTimestamps)
         } catch let error as ProviderError {
             if case .rateLimited(let retryAfter) = error, let retryAfter, retryAfter <= 3 {
                 try await Task.sleep(for: .seconds(retryAfter + 0.2))
-                return try await detailedRequest(wav: wav, model: model, language: language, prompt: prompt)
+                return try await detailedRequest(wav: wav, model: model, language: language, prompt: prompt, priority: priority, wordTimestamps: wordTimestamps)
             }
+            if case .dailyLimit = error { throw error }
             guard let fallbackModel, error != .missingKey else { throw error }
-            return try await detailedRequest(wav: wav, model: fallbackModel, language: language, prompt: prompt)
+            return try await detailedRequest(wav: wav, model: fallbackModel, language: language, prompt: prompt, priority: priority, wordTimestamps: wordTimestamps)
         }
     }
 
-    func detailedRequest(wav: Data, model: String, language: String?, prompt: String?) async throws -> DetailedTranscript {
-        let data = try await post(wav: wav, model: model, language: language, prompt: prompt, format: "verbose_json")
+    func detailedRequest(wav: Data, model: String, language: String?, prompt: String?, priority: GroqPriority, wordTimestamps: Bool) async throws -> DetailedTranscript {
+        let data = try await post(wav: wav, model: model, language: language, prompt: prompt, format: "verbose_json", priority: priority, wordTimestamps: wordTimestamps)
         return try Self.parseVerbose(data)
     }
 
@@ -132,10 +208,27 @@ public struct GroqTranscriber: Transcriber {
               let text = json["text"] as? String else { throw ProviderError.badResponse }
         let language = (json["language"] as? String).flatMap { Languages.code(forWhisperName: $0) ?? ($0.count <= 3 ? $0 : nil) }
         let raw = json["segments"] as? [[String: Any]] ?? []
+        let wordsRaw = json["words"] as? [[String: Any]] ?? []
+        let words = wordsRaw.compactMap { w -> DetailedTranscript.Word? in
+            guard let start = (w["start"] as? NSNumber)?.doubleValue, let end = (w["end"] as? NSNumber)?.doubleValue,
+                  let t = w["word"] as? String else { return nil }
+            return .init(word: t.trimmingCharacters(in: .whitespacesAndNewlines), start: start, end: end)
+        }
+        var wordIndex = 0
         let segments = raw.compactMap { s -> DetailedTranscript.Segment? in
             guard let start = (s["start"] as? NSNumber)?.doubleValue, let end = (s["end"] as? NSNumber)?.doubleValue,
                   let t = s["text"] as? String else { return nil }
-            return .init(start: start, end: end, text: t.trimmingCharacters(in: .whitespacesAndNewlines))
+            var own: [DetailedTranscript.Word] = []
+            // Words are reported in order; hand each to the segment whose span holds its midpoint.
+            while wordIndex < words.count, (words[wordIndex].start + words[wordIndex].end) / 2 <= end + 0.01 {
+                own.append(words[wordIndex])
+                wordIndex += 1
+            }
+            return .init(start: start, end: end, text: t.trimmingCharacters(in: .whitespacesAndNewlines),
+                         avgLogprob: (s["avg_logprob"] as? NSNumber)?.doubleValue,
+                         noSpeechProb: (s["no_speech_prob"] as? NSNumber)?.doubleValue,
+                         compressionRatio: (s["compression_ratio"] as? NSNumber)?.doubleValue,
+                         words: own)
         }
         var weighted = 0.0, total = 0.0
         for s in raw {
@@ -150,13 +243,14 @@ public struct GroqTranscriber: Transcriber {
     }
 
     func request(wav: Data, model: String, language: String?, prompt: String?) async throws -> String {
-        let data = try await post(wav: wav, model: model, language: language, prompt: prompt, format: "json")
+        let data = try await post(wav: wav, model: model, language: language, prompt: prompt, format: "json", priority: .interactive, wordTimestamps: false)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = json["text"] as? String else { throw ProviderError.badResponse }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func post(wav: Data, model: String, language: String?, prompt: String?, format: String) async throws -> Data {
+    private func post(wav: Data, model: String, language: String?, prompt: String?, format: String,
+                      priority: GroqPriority, wordTimestamps: Bool) async throws -> Data {
         guard !apiKey.isEmpty else { throw ProviderError.missingKey }
         let boundary = "vf-\(UUID().uuidString)"
         var body = Data()
@@ -168,19 +262,25 @@ public struct GroqTranscriber: Transcriber {
         field("temperature", "0")
         if let language, !language.isEmpty { field("language", language) }
         if let prompt, !prompt.isEmpty { field("prompt", prompt) }
+        if wordTimestamps {
+            field("timestamp_granularities[]", "segment")
+            field("timestamp_granularities[]", "word")
+        }
         body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
         body.append(wav)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
 
         var request = URLRequest(url: Groq.baseURL.appending(path: "audio/transcriptions"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        request.timeoutInterval = 45
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
-        let (data, _) = try await GroqHTTP.send(request, session: session)
-        return data
+        let seconds = max(0.01, Double(max(0, wav.count - 44)) / 2 / AudioMath.sampleRate)
+        return try await gate.perform(.transcription(model: model, audioSeconds: seconds), priority: priority) { [session, request] in
+            try await GroqHTTP.send(request, session: session)
+        }
     }
 }
 
@@ -199,9 +299,22 @@ enum GroqHTTP {
         case 200: return (data, http)
         case 429:
             let retry = http.value(forHTTPHeaderField: "retry-after").flatMap(Double.init)
+            let body = String(data: data, encoding: .utf8) ?? ""
+            if let resource = GroqLimitMessage.dailyResource(in: body) { throw ProviderError.dailyLimit(resource: resource, retryAfter: retry) }
             throw ProviderError.rateLimited(retryAfter: retry)
         default:
             throw ProviderError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
+    }
+}
+
+/// Reads Groq's rate-limit error text, e.g. "...on tokens per day (TPD): Limit 200000, Used 199000...".
+enum GroqLimitMessage {
+    static func dailyResource(in body: String) -> String? {
+        let b = body.lowercased()
+        guard b.contains("per day") || b.contains("(tpd)") || b.contains("(rpd)") || b.contains("(aspd)") else { return nil }
+        if b.contains("seconds of audio") || b.contains("aspd") { return "transcription" }
+        if b.contains("requests per day") || b.contains("rpd") { return "requests" }
+        return "tokens"
     }
 }

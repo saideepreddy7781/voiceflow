@@ -3,27 +3,15 @@ import Testing
 @testable import VoiceFlowCore
 
 struct MeetingTests {
-    private func tone(_ seconds: Double, _ amp: Float) -> [Float] {
-        (0..<Int(seconds * 16_000)).map { amp * sin(Float($0) * 0.13) }
-    }
-
-    @Test func louderSourceIsTheSpeaker() {
-        #expect(SpeakerAttribution.speaker(mic: tone(1, 0.4)[...], system: tone(1, 0.02)[...]) == .you)
-        #expect(SpeakerAttribution.speaker(mic: tone(1, 0.01)[...], system: tone(1, 0.3)[...]) == .others)
-    }
-
-    @Test func segmentsGetSpeakersAndMeetingTime() {
-        let mic = tone(2, 0.4) + [Float](repeating: 0, count: 32_000)
-        let system = [Float](repeating: 0, count: 32_000) + tone(2, 0.4)
+    @Test func chunkLinesUseTheMeetingClock() {
+        let map = TimeMap(spans: [.init(chunkStart: 0, meetingStart: 60, seconds: 2), .init(chunkStart: 2.25, meetingStart: 90, seconds: 2)])
         let transcript = DetailedTranscript(text: "a b", language: "en",
-                                            segments: [.init(start: 0, end: 1.9, text: "Hello there"), .init(start: 2.1, end: 3.9, text: "Hi")])
-        let lines = SpeakerAttribution.lines(for: transcript, chunkStart: 60, mic: mic, system: system)
-        #expect(lines.map(\.speaker) == [.you, .others])
-        #expect(lines.map(\.time) == [60, 62.1])
-    }
-
-    @Test func mixingPadsAndClips() {
-        #expect(SpeakerAttribution.mix([0.5, 0.9], [0.5, 0.9, 0.1]) == [1.0, 1.0, 0.1])
+                                            segments: [.init(start: 0, end: 1.9, text: "Hello there"), .init(start: 2.3, end: 3.9, text: "Hi")])
+        let lines = ChunkLines.lines(for: transcript, map: map, speaker: .others, chunkFallbackTime: 60)
+        #expect(lines.map(\.speaker) == [.others, .others])
+        #expect(abs(lines[0].time - 60) < 0.001)
+        #expect(abs(lines[1].time - 90.05) < 0.001)
+        #expect(lines[0].language == "en")
     }
 
     @Test func markdownAndSafeFileName() {
@@ -116,10 +104,12 @@ struct LiveMeetingTests {
             mic += (who == .you ? voice : quiet.map { _ in 0.002 }) + gap      // a little room noise on your mic
             system += (who == .others ? voice : quiet) + gap
         }
-        let mixed = SpeakerAttribution.mix(mic, system)
         let key = LivePipelineTests.key!
-        let transcript = try await GroqTranscriber(apiKey: key).transcribeDetailed(wav: AudioMath.wav(mixed), language: "en", prompt: "Ramesh")
-        let lines = SpeakerAttribution.lines(for: transcript, chunkStart: 0, mic: mic, system: system)
+        let micTranscript = try await GroqTranscriber(apiKey: key).transcribeDetailed(wav: AudioMath.wav(mic), language: "en", prompt: "Ramesh")
+        let transcript = try await GroqTranscriber(apiKey: key).transcribeDetailed(wav: AudioMath.wav(system), language: "en", prompt: "Ramesh")
+        let lines = zip([micTranscript, transcript], [Speaker.you, .others]).flatMap { t, who in
+            ChunkLines.lines(for: t, map: TimeMap(spans: [.init(chunkStart: 0, meetingStart: 0, seconds: 120)]), speaker: who, chunkFallbackTime: 0)
+        }.sorted { $0.time < $1.time }
         for l in lines { print("[\(Meeting.clock(l.time))] \(l.speaker.label): \(l.text)") }
         #expect(lines.contains { $0.speaker == .you && $0.text.contains("launch plan") })
         #expect(lines.contains { $0.speaker == .others && $0.text.lowercased().contains("payment") })
@@ -150,8 +140,8 @@ final class FakeSource: MeetingAudioSource {
 struct MeetingRecorderTests {
     static func speech(_ seconds: Double) -> [Float] { (0..<Int(seconds * 16_000)).map { 0.3 * sin(Float($0) * 0.17) } }
     static func silence(_ seconds: Double) -> [Float] { [Float](repeating: 0, count: Int(seconds * 16_000)) }
-    static let settings = MeetingRecorder.Settings(apiKey: "test", model: "m", language: "en", parallelLanguage: nil, languages: ["en"],
-                                                    prompt: nil, micDeviceUID: nil, recordSystemAudio: true)
+    static let settings = MeetingRecorder.Settings(apiKey: "test", model: "m", languages: ["en"], prompts: WhisperPrompts(),
+                                                    micDeviceUID: nil, recordSystemAudio: true)
 
     @Test func chunksAreTranscribedInOrderWithSpeakers() async throws {
         let mic = FakeSource(), system = FakeSource()
@@ -281,12 +271,12 @@ struct MeetingRecorderRobustnessTests {
     }
 
     @Test func secondOpinionRule() {
-        let langs = ["en", "te"]
+        let langs = LanguagePlan(languages: ["en", "te"])
         func t(_ text: String, _ lang: String?, _ conf: Double?) -> DetailedTranscript { .init(text: text, language: lang, segments: [], confidence: conf) }
-        #expect(!LanguageResolver.needsSecondOpinion(t("Can you check the invoice?", "en", -0.14), languages: langs))
-        #expect(LanguageResolver.needsSecondOpinion(t("नेनु रेपू", "hi", -0.08), languages: langs))
-        #expect(LanguageResolver.needsSecondOpinion(t("Neme Rebu meeting", "en", -0.7), languages: langs))
-        #expect(LanguageResolver.needsSecondOpinion(t("hello", nil, -0.1), languages: langs))
+        #expect(!LanguageResolver.needsSecondOpinion(t("Can you check the invoice?", "en", -0.14), plan: langs))
+        #expect(LanguageResolver.needsSecondOpinion(t("नेनु रेपू", "hi", -0.08), plan: langs))
+        #expect(LanguageResolver.needsSecondOpinion(t("Neme Rebu meeting", "en", -0.7), plan: langs))
+        #expect(LanguageResolver.needsSecondOpinion(t("hello", nil, -0.1), plan: langs))
     }
 
     @Test func teluguCountsAsMoreTokens() {

@@ -120,11 +120,14 @@ private struct GeneralSettings: View {
         SettingsGroup("My languages") {
             Text(model.preferences.languages.count == 1
                  ? "VoiceFlow listens for \(name(model.preferences.languages[0]))."
-                 : "VoiceFlow detects the language automatically. Choosing just one is most accurate.")
+                 : "Pick every language you speak. VoiceFlow detects which one you're using and checks it against this list. In meetings, other people can speak anything.")
                 .font(.callout).foregroundStyle(.secondary)
             LanguagePicker(selection: $model.preferences.languages)
             if model.preferences.speaksTelugu {
                 TeluguWritingPicker(selection: $model.preferences.teluguScript)
+            }
+            if model.preferences.speaksHindi {
+                HindiWritingPicker(selection: $model.preferences.hindiScript)
             }
         }
     }
@@ -170,6 +173,30 @@ struct TeluguWritingPicker: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Write Telugu as").font(.callout.weight(.semibold))
             ForEach(TeluguScript.allCases) { script in
+                Button { selection = script } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: selection == script ? "largecircle.fill.circle" : "circle")
+                            .foregroundStyle(selection == script ? Color.accentColor : .secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(script.displayName)
+                            Text(script.example).font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+struct HindiWritingPicker: View {
+    @Binding var selection: HindiScript
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Write Hindi as").font(.callout.weight(.semibold))
+            ForEach(HindiScript.allCases) { script in
                 Button { selection = script } label: {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: selection == script ? "largecircle.fill.circle" : "circle")

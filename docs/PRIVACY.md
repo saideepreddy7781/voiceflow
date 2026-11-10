@@ -8,7 +8,7 @@ Perplexity only when you ask Command Mode to search.
 | When | What | Why |
 |---|---|---|
 | While you hold the key or use hands-free mode | Microphone audio, in segments of up to 30 s | Speech recognition (Whisper) |
-| With each audio segment | Up to ~180 tokens of names: your dictionary words and capitalized names found in the field you're typing in | Correct spelling |
+| With each audio segment | Up to ~180 tokens of names: your dictionary words and capitalized names found in the field you're typing in. Telugu and Hindi requests also carry a fixed sample sentence from the app | Correct spelling and script |
 | After you finish speaking | Your transcript, the app's name, the style, up to 120 characters before your cursor, up to 40 names, and file names you mentioned (code editors only) | AI cleanup |
 | Command Mode only | Your spoken instruction, the selected text, and the text of the focused field (up to 12,000 characters) | Editing or drafting |
 | When you press Test in Settings | Your API key, to list Groq's models | Checking the key |
@@ -23,11 +23,16 @@ VoiceFlow shows when a call starts). A red chip with a timer stays on screen the
 
 | What | Where it goes |
 |---|---|
-| Your microphone and the meeting audio (the other people), mixed, in 20–45 s pieces | Groq, for transcription |
+| Your microphone and the meeting audio (the other people), uploaded separately. Only the parts with speech go, in pieces of up to 45 s of speech | Groq, for transcription |
+| Telugu and Hindi transcript lines, if you listed those languages | Groq, to rewrite them in the writing you chose |
 | The transcript, the meeting title and attendee names | Groq, to write the notes |
 | The transcript and notes | `meetings.json` on this Mac (owner-only permissions) |
 | A Markdown copy of each meeting | Only the folder you choose under Settings → Notetaker → Sync |
 | Calendar: the title and attendee names of the event happening now | Read on this Mac, only if you turn on "Use my calendar" |
+
+When you've listed more than one language, the same piece of audio can be sent up to three times, so Whisper
+can compare languages. Pieces that fail to upload stay in memory (at most about 20 minutes of audio) for one more
+try when the meeting ends, then they are discarded.
 
 If you dictate during a meeting, those words are part of your microphone audio, so they also appear in
 the meeting transcript. Audio is never written to disk. Recording other people can require their consent where you live:

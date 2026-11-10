@@ -62,6 +62,37 @@ public enum TeluguScript: String, CaseIterable, Codable, Sendable, Identifiable 
     public var promptName: String { rawValue }
 }
 
+/// How Hindi dictation and meeting transcripts are written.
+public enum HindiScript: String, CaseIterable, Codable, Sendable, Identifiable {
+    /// मैं कल ऑफिस आऊँगा
+    case devanagari
+    /// मैं कल office आऊँगा
+    case mixed
+    /// main kal office aaunga
+    case hinglish
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .devanagari: "Devanagari"
+        case .mixed: "Hindi + English words"
+        case .hinglish: "Hinglish (English letters)"
+        }
+    }
+
+    public var example: String {
+        switch self {
+        case .devanagari: "मैं कल ऑफिस आऊँगा, मीटिंग दस बजे है।"
+        case .mixed: "मैं कल office आऊँगा, meeting 10 बजे है।"
+        case .hinglish: "Main kal office aaunga, meeting 10 baje hai."
+        }
+    }
+
+    /// The word used in the cleanup prompt's <hindi> tag.
+    public var promptName: String { rawValue }
+}
+
 public enum CleanupLevel: String, CaseIterable, Codable, Sendable, Identifiable {
     case none
     case light
@@ -109,9 +140,11 @@ public struct Preferences: Equatable, Codable, Sendable {
     public var geminiModel: String = ""
 
     // Dictation
-    /// Languages you speak (Whisper codes). One language is passed to Whisper; none or several means auto-detect.
+    /// Languages you speak (Whisper codes). One language is passed to Whisper; none or several means auto-detect,
+    /// checked against this list (see `LanguageResolver`).
     public var languages: [String] = ["en"]
     public var teluguScript: TeluguScript = .mixed
+    public var hindiScript: HindiScript = .mixed
     public var cleanupLevel: CleanupLevel = .light
     public var commandModeEnabled: Bool = true
     public var styles: [StyleCategory: WritingStyle] = [:]
@@ -154,23 +187,22 @@ public struct Preferences: Equatable, Codable, Sendable {
         return category.options.contains(chosen) ? chosen : category.defaultStyle
     }
 
-    /// The `language` sent to Whisper: the one language you chose, or nil (auto-detect).
+    /// The `language` sent to Whisper when there's no choosing to do: your one language, or nil.
     public var whisperLanguage: String? {
         languages.count == 1 ? languages[0] : nil
     }
 
-    /// With several languages, the one transcribed in parallel with auto-detect (see `LanguageResolver`):
-    /// your first language other than English. Nil when there is only one language.
-    public var parallelLanguage: String? {
-        guard languages.count > 1 else { return nil }
-        return languages.first { $0 != "en" } ?? languages.first
+    /// Who might be speaking and what they might speak, for the resolver.
+    public func languagePlan(_ speaker: LanguagePlan.Speaker = .user) -> LanguagePlan {
+        LanguagePlan(languages: languages, speaker: speaker)
     }
 
     public var speaksTelugu: Bool { languages.contains("te") }
+    public var speaksHindi: Bool { languages.contains("hi") }
 
     private enum CodingKeys: String, CodingKey {
         case hotkey, editorProvider, transcriptionModel, cleanupModel, commandModel, geminiModel
-        case languages, teluguScript, cleanupLevel, commandModeEnabled, styles, autoLearnWords
+        case languages, teluguScript, hindiScript, cleanupLevel, commandModeEnabled, styles, autoLearnWords
         case inputDeviceUID, whisperMode, muteAudioWhileDictating, playSounds
         case meetingsDetect, meetingsSystemAudio, meetingsFolder, meetingsNotesLanguage, meetingsUseCalendar, meetingsConsentReminder
         case showBarWhenIdle, showInDock, historyRetentionDays, launchAtLogin, debugLogging, onboarded
@@ -196,6 +228,7 @@ public struct Preferences: Equatable, Codable, Sendable {
             languages = old.isEmpty ? [] : [old]
         }
         teluguScript = value(.teluguScript, d.teluguScript)
+        hindiScript = value(.hindiScript, d.hindiScript)
         if let level = try? c.decodeIfPresent(CleanupLevel.self, forKey: .cleanupLevel) {
             cleanupLevel = level
         } else if (try? c.decodeIfPresent(Bool.self, forKey: .cleanupEnabled)) == false {
@@ -232,6 +265,7 @@ public struct Preferences: Equatable, Codable, Sendable {
         try c.encode(geminiModel, forKey: .geminiModel)
         try c.encode(languages, forKey: .languages)
         try c.encode(teluguScript, forKey: .teluguScript)
+        try c.encode(hindiScript, forKey: .hindiScript)
         try c.encode(cleanupLevel, forKey: .cleanupLevel)
         try c.encode(commandModeEnabled, forKey: .commandModeEnabled)
         try c.encode(styles, forKey: .styles)

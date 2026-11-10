@@ -14,11 +14,17 @@ public struct TranscriptLine: Codable, Hashable, Sendable {
     public var time: Double
     public var speaker: Speaker
     public var text: String
+    /// When the line ended, for lining up the two sides of the call. Missing in older meetings.
+    public var end: Double?
+    /// Whisper's language for this line. Missing in older meetings.
+    public var language: String?
 
-    public init(time: Double, speaker: Speaker, text: String) {
+    public init(time: Double, speaker: Speaker, text: String, end: Double? = nil, language: String? = nil) {
         self.time = time
         self.speaker = speaker
         self.text = text
+        self.end = end
+        self.language = language
     }
 }
 
@@ -77,6 +83,17 @@ public struct MeetingNotes: Codable, Hashable, Sendable {
     }
 }
 
+public extension MeetingNotes {
+    /// Keeps the ticks on action items that are still there after the notes are rewritten.
+    func carryingOverDone(from old: MeetingNotes?) -> MeetingNotes {
+        guard let old else { return self }
+        let done = Set(old.actionItems.filter(\.done).map { $0.task.lowercased() })
+        var out = self
+        for i in out.actionItems.indices where done.contains(out.actionItems[i].task.lowercased()) { out.actionItems[i].done = true }
+        return out
+    }
+}
+
 public struct Meeting: Codable, Hashable, Sendable, Identifiable {
     public enum Status: String, Codable, Sendable { case recording, writingNotes, done, failed }
 
@@ -97,6 +114,12 @@ public struct Meeting: Codable, Hashable, Sendable, Identifiable {
     public var syncedFileName: String?
     /// Seconds with no usable microphone audio, when the microphone failed during the meeting.
     public var micMissingSeconds: Int?
+    /// What "Others" is called in this meeting, after a rename. You stays yours.
+    public var othersLabel: String?
+    /// A plain-language note about gaps, shown with the transcript (for example a daily limit running out).
+    public var note: String?
+    /// Lines were rewritten into the chosen writing (Telugu or Hindi script choice).
+    public var scriptRewritten: Bool?
 
     public init(title: String, start: Date = Date(), app: String = "") {
         self.title = title
@@ -107,12 +130,55 @@ public struct Meeting: Codable, Hashable, Sendable, Identifiable {
     public var duration: TimeInterval { (end ?? Date()).timeIntervalSince(start) }
 
     public var transcriptText: String {
-        lines.map { "[\(Self.clock($0.time))] \($0.speaker.label): \($0.text)" }.joined(separator: "\n")
+        lines.map { "[\(Self.clock($0.time))] \(label(for: $0.speaker)): \($0.text)" }.joined(separator: "\n")
+    }
+
+    /// The name shown for a speaker, using this meeting's rename of "Others".
+    public func label(for speaker: Speaker) -> String {
+        if speaker == .others, let name = othersLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+        return speaker.label
+    }
+
+    /// The language spoken most in this meeting, by word count, from the per-line languages.
+    public var dominantLanguage: String? {
+        var words: [String: Int] = [:]
+        for line in lines { if let l = line.language { words[l, default: 0] += line.text.split(separator: " ").count } }
+        return words.max { $0.value < $1.value }?.key
     }
 
     public static func clock(_ seconds: Double) -> String {
         let s = Int(seconds)
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+/// Finds meetings by title, notes or transcript.
+public enum MeetingSearch {
+    /// Whether the meeting mentions `query` anywhere. An empty query matches everything.
+    public static func matches(_ meeting: Meeting, query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return true }
+        return searchableParts(meeting).contains { $0.localizedCaseInsensitiveContains(q) }
+    }
+
+    /// A short piece of the first matching transcript line or note, for the results list. Nil when only the title matches.
+    public static func snippet(_ meeting: Meeting, query: String, radius: Int = 40) -> String? {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return nil }
+        for part in searchableParts(meeting).dropFirst() {
+            guard let range = part.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
+            let start = part.index(range.lowerBound, offsetBy: -radius, limitedBy: part.startIndex) ?? part.startIndex
+            let end = part.index(range.upperBound, offsetBy: radius, limitedBy: part.endIndex) ?? part.endIndex
+            return (start > part.startIndex ? "…" : "") + part[start..<end] + (end < part.endIndex ? "…" : "")
+        }
+        return nil
+    }
+
+    private static func searchableParts(_ m: Meeting) -> [String] {
+        var parts = [m.title]
+        if let n = m.notes { parts += n.summary + n.decisions + n.actionItems.map(\.task) + n.questions }
+        parts += m.lines.map(\.text)
+        return parts
     }
 }
 
@@ -138,7 +204,8 @@ public enum MeetingMarkdown {
             }
             if !n.questions.isEmpty { out += "\n## Open questions\n\n" + n.questions.map { "- \($0)" }.joined(separator: "\n") + "\n" }
         }
-        if !m.lines.isEmpty { out += "\n## Transcript\n\n" + m.lines.map { "**\($0.speaker.label)** [\(Meeting.clock($0.time))]: \($0.text)" }.joined(separator: "\n\n") + "\n" }
+        if let note = m.note, !note.isEmpty { out += "\n_\(note)_\n" }
+        if !m.lines.isEmpty { out += "\n## Transcript\n\n" + m.lines.map { "**\(m.label(for: $0.speaker))** [\(Meeting.clock($0.time))]: \($0.text)" }.joined(separator: "\n\n") + "\n" }
         return out
     }
 
@@ -149,44 +216,5 @@ public enum MeetingMarkdown {
         let safeTitle = m.title.components(separatedBy: CharacterSet(charactersIn: "/\\:?*\"<>|\n\r\t")).joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
         return "\(f.string(from: m.start)) \(safeTitle.isEmpty ? "Meeting" : String(safeTitle.prefix(80))).md"
-    }
-}
-
-/// Decides who spoke during a stretch of audio by comparing your mic with the meeting audio.
-public enum SpeakerAttribution {
-    public static func speaker(mic: ArraySlice<Float>, system: ArraySlice<Float>) -> Speaker {
-        let micDB = AudioMath.dbfs(AudioMath.rms(mic))
-        let systemDB = AudioMath.dbfs(AudioMath.rms(system))
-        // Your voice reaches the meeting audio only faintly (echo cancellation), and the meeting audio reaches
-        // your mic only through speakers, so the louder source wins.
-        return micDB > systemDB ? .you : .others
-    }
-
-    /// Mixes your mic and the meeting audio into one stream for transcription (one upload instead of two).
-    public static func mix(_ mic: [Float], _ system: [Float]) -> [Float] {
-        let n = max(mic.count, system.count)
-        var out = [Float](repeating: 0, count: n)
-        for i in 0..<n {
-            let v = (i < mic.count ? mic[i] : 0) + (i < system.count ? system[i] : 0)
-            out[i] = max(-1, min(1, v))
-        }
-        return out
-    }
-
-    /// Turns Whisper's timed segments for one chunk into transcript lines with speakers.
-    public static func lines(for transcript: DetailedTranscript, chunkStart: Double, mic: [Float], system: [Float]) -> [TranscriptLine] {
-        let rate = AudioMath.sampleRate
-        if transcript.segments.isEmpty {
-            let text = transcript.text
-            return text.isEmpty ? [] : [TranscriptLine(time: chunkStart, speaker: speaker(mic: mic[...], system: system[...]), text: text)]
-        }
-        return transcript.segments.compactMap { seg in
-            guard !seg.text.isEmpty else { return nil }
-            let a = max(0, min(mic.count, Int(seg.start * rate)))
-            let b = max(a, min(mic.count, Int(seg.end * rate)))
-            let sa = max(0, min(system.count, a)), sb = max(sa, min(system.count, b))
-            let who = speaker(mic: mic[a..<b], system: system[sa..<sb])
-            return TranscriptLine(time: chunkStart + seg.start, speaker: who, text: seg.text)
-        }
     }
 }

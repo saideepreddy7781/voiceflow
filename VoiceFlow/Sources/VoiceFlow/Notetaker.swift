@@ -32,6 +32,9 @@ final class Notetaker {
     var micMissingSeconds: Int { recorder.micMissingSeconds }
     var micLevel: Float { recorder.micLevel }
     var systemLevel: Float { recorder.systemLevel }
+    /// The language last heard on each side, for the live view.
+    var micLanguage: String? { recorder.micLanguage }
+    var callLanguage: String? { recorder.callLanguage }
     /// Bumped every second while recording so level meters redraw.
     private(set) var levelTick = 0
     private var warnedSilentSystem = false
@@ -50,6 +53,9 @@ final class Notetaker {
         recorder.onUpdate = { [weak self] meeting in
             self?.live = meeting
             self?.saveLiveSnapshot(meeting)
+        }
+        recorder.onDailyLimit = { [weak self] message in
+            self?.model.pill.show("Groq's daily limit ran out", detail: message, seconds: 12)
         }
         detectTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.detect() }
@@ -85,9 +91,8 @@ final class Notetaker {
         let attendees = event?.attendees ?? []
         let names = model.dictionaryTerms + attendees
         let settings = MeetingRecorder.Settings(
-            apiKey: key, model: prefs.transcriptionModel, language: prefs.whisperLanguage,
-            parallelLanguage: prefs.parallelLanguage, languages: prefs.languages,
-            prompt: NameExtractor.whisperPrompt(dictionary: names, names: []),
+            apiKey: key, model: prefs.transcriptionModel, languages: prefs.languages,
+            prompts: WhisperPrompts(terms: names, telugu: prefs.teluguScript, hindi: prefs.hindiScript),
             micDeviceUID: prefs.inputDeviceUID.isEmpty ? nil : prefs.inputDeviceUID,
             recordSystemAudio: prefs.meetingsSystemAudio)
         do {
@@ -164,7 +169,7 @@ final class Notetaker {
         model.pill.meetingSince = nil
         levelTimer?.invalidate()
         levelTimer = nil
-        guard var meeting = await recorder.stop() else { state = .idle; return nil }
+        guard var meeting = await recorder.stop(retryFailed: writeNotes) else { state = .idle; return nil }
         meeting.status = writeNotes ? .writingNotes : .failed
         if !writeNotes { meeting.error = "VoiceFlow quit before the notes were written. Press Try again." }
         meetings.removeAll { $0.id == meeting.id }   // the live snapshot
@@ -208,11 +213,16 @@ final class Notetaker {
             meetings[i].error = "No Groq key available. Add it in Settings → API keys, then press Try again."
             return
         }
-        let writer = MeetingNotesWriter(chat: GroqChat(apiKey: key), model: model.preferences.commandModel)
+        let prefs = model.preferences
+        let chat = GroqChat(apiKey: key)
+        await rewriteScript(for: id, chat: chat, prefs: prefs)
+        guard let current = meetings.first(where: { $0.id == id }) else { return }
+        let writer = MeetingNotesWriter(chat: chat, model: prefs.commandModel)
         do {
-            let notes = try await writer.write(meeting: meetings[i], language: model.preferences.meetingsNotesLanguage)
+            let notes = try await writer.write(meeting: current, language: prefs.meetingsNotesLanguage,
+                                               telugu: prefs.teluguScript, hindi: prefs.hindiScript)
             guard let j = meetings.firstIndex(where: { $0.id == id }) else { return }
-            meetings[j].notes = notes
+            meetings[j].notes = notes.carryingOverDone(from: meetings[j].notes)
             if meetings[j].title.hasSuffix("meeting") || meetings[j].title == "Meeting", !notes.title.isEmpty {
                 meetings[j].title = notes.title
             }
@@ -223,8 +233,30 @@ final class Notetaker {
         } catch {
             guard let j = meetings.firstIndex(where: { $0.id == id }) else { return }
             meetings[j].status = .failed
-            meetings[j].error = "\(error)"
+            if case ProviderError.dailyLimit = error {
+                meetings[j].error = "\(error) Your transcript is saved. Press Try again after that."
+                model.pill.show("Notes are waiting on Groq's daily limit", detail: meetings[j].error ?? "", seconds: 10)
+            } else {
+                meetings[j].error = "\(error)"
+            }
             saveToFolder(meetings[j])
+        }
+    }
+
+    /// Applies the Telugu and Hindi writing choices to a newly recorded transcript. Older meetings stay as they are.
+    private func rewriteScript(for id: Meeting.ID, chat: GroqChat, prefs: Preferences) async {
+        guard let meeting = meetings.first(where: { $0.id == id }), meeting.scriptRewritten != true,
+              meeting.lines.contains(where: { $0.language != nil }) else { return }
+        let telugu = prefs.speaksTelugu ? prefs.teluguScript : nil
+        let hindi = prefs.speaksHindi ? prefs.hindiScript : nil
+        guard telugu != nil || hindi != nil else { return }
+        let writer = TranscriptScriptWriter(chat: chat, model: prefs.cleanupModel)
+        let result = await writer.rewrite(meeting.lines, telugu: telugu, hindi: hindi)
+        guard let i = meetings.firstIndex(where: { $0.id == id }) else { return }
+        meetings[i].lines = result.lines
+        meetings[i].scriptRewritten = result.note == nil
+        if let note = result.note {
+            meetings[i].note = [meetings[i].note, note].compactMap { $0 }.joined(separator: " ")
         }
     }
 
@@ -235,6 +267,14 @@ final class Notetaker {
         let old = meetings[i]
         meetings[i].title = title
         saveToFolder(meetings[i], replacing: old)
+    }
+
+    /// Names the other side of a meeting. Empty goes back to "Others".
+    func renameOthers(_ id: Meeting.ID, to name: String) {
+        guard let i = meetings.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        meetings[i].othersLabel = trimmed.isEmpty ? nil : trimmed
+        saveToFolder(meetings[i])
     }
 
     func toggleAction(_ id: Meeting.ID, item: ActionItem.ID) {

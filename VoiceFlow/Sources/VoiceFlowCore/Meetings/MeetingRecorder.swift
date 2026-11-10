@@ -39,58 +39,75 @@ extension SystemAudioCapture: MeetingAudioSource {
     public func drainSamples() -> [Float] { drain() }
 }
 
-/// Records a meeting: your microphone plus the meeting audio, transcribed while it happens.
+/// Records a meeting: your microphone and the call, transcribed separately while it happens.
 ///
-/// Memory stays small for long meetings: audio is drained from both sources every second and only
-/// the chunk still being collected (at most 45 s) is kept. Each chunk is mixed into one stream, so a
-/// meeting costs one transcription upload per chunk, and Whisper's timed segments are labelled
-/// You/Others by comparing the two sources over each segment.
+/// Each side is cut into uploads of voiced audio only (`StreamChunker`), so "You" and "Others" are real labels,
+/// overlapping talk stays apart, and a meeting costs about its own length in audio seconds. The two sides are
+/// merged by time (`TranscriptMerge`). Audio stays in memory: at most the chunk being collected on each side,
+/// plus failed chunks up to `ChunkHold.capacitySeconds` to retry when the meeting ends.
 @MainActor
 public final class MeetingRecorder {
     public struct Settings: Sendable {
         public var apiKey: String
         public var model: String
-        public var language: String?
-        public var parallelLanguage: String?
         public var languages: [String]
-        public var prompt: String?
+        public var prompts: WhisperPrompts
         public var micDeviceUID: String?
         public var recordSystemAudio: Bool
 
-        public init(apiKey: String, model: String, language: String?, parallelLanguage: String?, languages: [String],
-                    prompt: String?, micDeviceUID: String?, recordSystemAudio: Bool) {
+        public init(apiKey: String, model: String, languages: [String], prompts: WhisperPrompts,
+                    micDeviceUID: String?, recordSystemAudio: Bool) {
             self.apiKey = apiKey
             self.model = model
-            self.language = language
-            self.parallelLanguage = parallelLanguage
             self.languages = languages
-            self.prompt = prompt
+            self.prompts = prompts
             self.micDeviceUID = micDeviceUID
             self.recordSystemAudio = recordSystemAudio
         }
     }
 
-    public typealias Transcribe = @Sendable (Data, Settings) async throws -> DetailedTranscript
+    /// One upload: which side it is, and the language to try first.
+    public struct ChunkRequest: Sendable {
+        public var settings: Settings
+        public var plan: LanguagePlan
+        public var hint: String?
+    }
+
+    public typealias Transcribe = @Sendable (Data, ChunkRequest) async throws -> DetailedTranscript
+
+    /// Tries per chunk during the meeting, and again at the end.
+    static let liveAttempts = 2
+    static let finalAttempts = 3
+    /// Longest Stop spends retrying failed chunks.
+    static let finalRetrySeconds = 180.0
+    /// With less audio budget than this left in the hour, meetings skip second opinions.
+    static let secondOpinionHeadroom = 900.0
+
+    private struct Side {
+        var chunker = StreamChunker()
+        var tracker = StreamLanguageTracker()
+    }
 
     private let log = Logger(subsystem: "com.saideep.voiceflow", category: "meeting")
     private let makeMic: @MainActor (Settings) -> MeetingAudioSource
     private let makeSystem: @MainActor () -> MeetingAudioSource?
     private let transcribe: Transcribe
+    private let retryDelay: @Sendable (Int) -> Double
 
     private var mic: MeetingAudioSource?
     private var system: MeetingAudioSource?
     private var timer: Timer?
     private var settings: Settings?
 
-    // Audio not yet sent, aligned sample-for-sample.
-    private var pendingMic: [Float] = []
-    private var pendingSystem: [Float] = []
+    // Audio not yet handed to a chunker, so the two sides stay aligned.
     private var queuedMic: [Float] = []
     private var queuedSystem: [Float] = []
-    /// Samples already sent, i.e. the start time of the pending chunk.
-    private var sentSamples = 0
-    /// Appends each chunk's lines in order, exactly once.
-    private var appendChain: Task<Void, Never>?
+    private var micSide = Side()
+    private var callSide = Side()
+    private var uploads: [Task<Void, Never>] = []
+    private var hold = ChunkHold()
+    private var lostSeconds = 0.0
+    private var dailyLimit: ProviderError?
     private var heardSpeech = false
     private var micMonitor = MicHealthMonitor()
 
@@ -100,6 +117,9 @@ public final class MeetingRecorder {
     /// Live input levels (0...1) for the Meetings page.
     public private(set) var micLevel: Float = 0
     public private(set) var systemLevel: Float = 0
+    /// The language last heard on each side, for the live view.
+    public private(set) var micLanguage: String?
+    public private(set) var callLanguage: String?
     /// Seconds in a row the meeting audio has been digital silence (often: system audio permission missing).
     public private(set) var systemSilentSeconds = 0
     /// Whether the microphone is delivering usable audio. A meeting keeps recording through any of these.
@@ -110,6 +130,8 @@ public final class MeetingRecorder {
     public private(set) var micRestartsRequested = 0
     /// Called on the main actor whenever new transcript lines arrive.
     public var onUpdate: ((Meeting) -> Void)?
+    /// Called once when Groq's daily limit runs out during a meeting, with a sentence for the user.
+    public var onDailyLimit: ((String) -> Void)?
 
     public init() {
         makeMic = { settings in MicSource(deviceUID: settings.micDeviceUID) }
@@ -117,29 +139,25 @@ public final class MeetingRecorder {
             if #available(macOS 14.2, *) { return SystemAudioCapture() }
             return nil
         }
-        transcribe = { wav, settings in
-            try await GroqTranscriber(apiKey: settings.apiKey, model: settings.model)
-                .transcribeResolving(wav: wav, language: settings.language, parallelLanguage: settings.parallelLanguage,
-                                     languages: settings.languages, prompt: settings.prompt, sequential: true)
+        retryDelay = { Double($0) * 2 }
+        transcribe = { wav, request in
+            let settings = request.settings
+            var plan = request.plan
+            // Short on audio budget: one upload per chunk, and auto-detect has the last word.
+            if await GroqGate.shared.transcriptionHeadroom(model: settings.model) < Self.secondOpinionHeadroom { plan.languages = [] }
+            return try await GroqTranscriber(apiKey: settings.apiKey, model: settings.model)
+                .transcribeResolving(wav: wav, plan: plan, prompts: settings.prompts, mode: .sequential(hint: request.hint),
+                                     priority: .background, wordTimestamps: true)
         }
     }
 
     /// For tests: simulated sources and transcription.
     init(mic: @escaping @MainActor (Settings) -> MeetingAudioSource, system: @escaping @MainActor () -> MeetingAudioSource?,
-         transcribe: @escaping Transcribe) {
+         retryDelay: @escaping @Sendable (Int) -> Double = { _ in 0 }, transcribe: @escaping Transcribe) {
         makeMic = mic
         makeSystem = system
+        self.retryDelay = retryDelay
         self.transcribe = transcribe
-    }
-
-    /// Meeting chunks: 20–45 s, cut at a pause, no overlap (pauses separate sentences).
-    static func makeCutter() -> SegmentCutter {
-        var c = SegmentCutter()
-        c.minimumSeconds = 20
-        c.maximumSeconds = 45
-        c.pauseSeconds = 0.6
-        c.overlapSeconds = 0
-        return c
     }
 
     public func start(title: String, app: String, attendees: [String], settings: Settings, autoTick: Bool = true) throws {
@@ -171,9 +189,13 @@ public final class MeetingRecorder {
         micHealth = .healthy
         micMissingSeconds = 0
         micRestartsRequested = 0
-        pendingMic = []; pendingSystem = []; queuedMic = []; queuedSystem = []
-        sentSamples = 0
-        appendChain = nil
+        queuedMic = []; queuedSystem = []
+        micSide = Side(); callSide = Side()
+        uploads = []
+        hold = ChunkHold()
+        lostSeconds = 0
+        dailyLimit = nil
+        micLanguage = nil; callLanguage = nil
         if autoTick {
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.tick() }
@@ -183,7 +205,8 @@ public final class MeetingRecorder {
     }
 
     /// Stops recording and returns the meeting once every chunk is transcribed.
-    public func stop() async -> Meeting? {
+    /// `retryFailed` is false when the app is quitting, so failed chunks are marked at once.
+    public func stop(retryFailed: Bool = true) async -> Meeting? {
         guard isRecording else { return meeting }
         timer?.invalidate()
         timer = nil
@@ -197,7 +220,11 @@ public final class MeetingRecorder {
         micLevel = 0
         systemLevel = 0
         meeting?.end = Date()
-        await appendChain?.value
+        let running = uploads
+        uploads = []
+        for upload in running { await upload.value }
+        await retryHeld(enabled: retryFailed)
+        writeGapNote()
         if meeting?.lines.isEmpty == true {
             meeting?.error = heardSpeech
                 ? "Speech was recorded but could not be transcribed. Check your Groq key and internet connection, then try again."
@@ -211,42 +238,35 @@ public final class MeetingRecorder {
         queuedMic.append(contentsOf: newMic)
         micLevel = AudioMath.level(newMic.suffix(1_600)[...])
         if !final { updateMicHealth(newMic) }
+        var micSamples: [Float] = []
+        var callSamples: [Float] = []
         if let system {
             let newSystem = system.drainSamples()
             systemLevel = AudioMath.level(newSystem.suffix(1_600)[...])
             systemSilentSeconds = newSystem.allSatisfy { $0 == 0 } ? systemSilentSeconds + 1 : 0
             queuedSystem.append(contentsOf: newSystem)
-            // Keep the two sources aligned. Whichever stalls (mic restarting, output device changing) is padded.
+            // Keep the two sides on one clock. Whichever stalls (mic restarting, output device changing) is padded.
             let twoSeconds = Int(AudioMath.sampleRate) * 2
             let lag = queuedMic.count - queuedSystem.count
             if lag > twoSeconds { queuedSystem.append(contentsOf: [Float](repeating: 0, count: lag)) }
             if -lag > twoSeconds { queuedMic.append(contentsOf: [Float](repeating: 0, count: -lag)) }
             let n = final ? max(queuedMic.count, queuedSystem.count) : min(queuedMic.count, queuedSystem.count)
-            pendingMic.append(contentsOf: take(&queuedMic, n))
-            pendingSystem.append(contentsOf: take(&queuedSystem, n))
+            micSamples = take(&queuedMic, n)
+            callSamples = take(&queuedSystem, n)
         } else {
-            let n = queuedMic.count
-            pendingMic.append(contentsOf: take(&queuedMic, n))
-            pendingSystem.append(contentsOf: [Float](repeating: 0, count: n))
+            micSamples = take(&queuedMic, queuedMic.count)
         }
 
-        // Send every complete chunk (more than one if audio piled up), never more than 45 s per upload.
-        while true {
-            let mixed = SpeakerAttribution.mix(pendingMic, pendingSystem)
-            var cutter = Self.makeCutter()
-            var range = cutter.nextCut(in: mixed)
-            if range == nil, final, !mixed.isEmpty { range = 0..<mixed.count }   // what's left at Stop (< 45 s)
-            guard let range else { break }
-            send(mixed: Array(mixed[range]), mic: Array(pendingMic[range]), system: Array(pendingSystem[range]))
-            pendingMic.removeFirst(range.upperBound)
-            pendingSystem.removeFirst(range.upperBound)
-            sentSamples += range.upperBound
-            if pendingMic.isEmpty { break }
+        for chunk in micSide.chunker.feed(micSamples) { send(chunk, speaker: .you) }
+        for chunk in callSide.chunker.feed(callSamples) { send(chunk, speaker: .others) }
+        if final {
+            if let chunk = micSide.chunker.finish() { send(chunk, speaker: .you) }
+            if let chunk = callSide.chunker.finish() { send(chunk, speaker: .others) }
         }
     }
 
-    /// Notices a microphone that stopped working: the zero padding below keeps the meeting aligned, so
-    /// without this a dead microphone looks exactly like a person who is not talking.
+    /// Notices a microphone that stopped working: padding keeps the meeting aligned, so without this
+    /// a dead microphone looks exactly like a person who is not talking.
     private func updateMicHealth(_ samples: [Float]) {
         let silent = !samples.isEmpty && MicHealthMonitor.isDigitallySilent(samples)
         if samples.isEmpty || silent { micMissingSeconds += 1 }
@@ -266,40 +286,128 @@ public final class MeetingRecorder {
         return head
     }
 
-    private func send(mixed: [Float], mic: [Float], system: [Float]) {
+    private func request(for speaker: Speaker, settings: Settings) -> ChunkRequest {
+        let hint = speaker == .you ? micSide.tracker.nextHint() : callSide.tracker.nextHint()
+        return ChunkRequest(settings: settings, plan: LanguagePlan(languages: settings.languages, speaker: speaker == .you ? .user : .anyone), hint: hint)
+    }
+
+    private func send(_ chunk: AudioChunk, speaker: Speaker) {
         guard let settings else { return }
-        let chunkStart = Double(sentSamples) / AudioMath.sampleRate
-        if AudioMath.isSilent(mixed, minimumVoicedSeconds: 0.5) { return }
         heardSpeech = true
-        let wav = AudioMath.wav(AudioMath.normalized(mixed))
+        let request = request(for: speaker, settings: settings)
+        let wav = AudioMath.wav(AudioMath.normalized(chunk.samples))
         let transcribe = self.transcribe
+        let retryDelay = self.retryDelay
         let log = self.log
-        let chunk = Task.detached(priority: .utility) { () -> [TranscriptLine] in
-            // Up to 4 tries: rate limits are waited out, other errors retried after a short pause.
-            for attempt in 1...4 {
-                do {
-                    let result = try await transcribe(wav, settings)
-                    if HallucinationFilter.isLikelyHallucination(result.text, voicedSeconds: AudioMath.voicedSeconds(mixed)) { return [] }
-                    return SpeakerAttribution.lines(for: result, chunkStart: chunkStart, mic: mic, system: system)
-                } catch {
-                    log.error("Meeting chunk failed (try \(attempt)): \(String(describing: error), privacy: .private)")
-                    if case ProviderError.missingKey = error { break }
-                    if attempt < 4 {
-                        let wait: Double
-                        if case ProviderError.rateLimited(let retryAfter) = error { wait = min(60, (retryAfter ?? 10) + 1) } else { wait = Double(attempt) * 2 }
-                        try? await Task.sleep(for: .seconds(wait))
-                    }
+        let attempts = Self.liveAttempts
+        let upload = Task.detached(priority: .utility) { () -> Result<DetailedTranscript, Error> in
+            await Self.attempt(wav: wav, request: request, tries: attempts, transcribe: transcribe, retryDelay: retryDelay, log: log)
+        }
+        uploads.append(Task { [weak self] in
+            let result = await upload.value
+            self?.finish(result, chunk: chunk, speaker: speaker, request: request)
+        })
+    }
+
+    /// Rate limits are waited out (`GroqGate` has already waited what it can); other errors retried after a short pause.
+    nonisolated private static func attempt(wav: Data, request: ChunkRequest, tries: Int, transcribe: Transcribe,
+                                            retryDelay: @Sendable (Int) -> Double, log: Logger) async -> Result<DetailedTranscript, Error> {
+        var last: Error = ProviderError.badResponse
+        for attempt in 1...tries {
+            do {
+                return .success(try await transcribe(wav, request))
+            } catch {
+                last = error
+                log.error("Meeting chunk failed (try \(attempt)): \(String(describing: error), privacy: .private)")
+                if case ProviderError.missingKey = error { break }
+                if case ProviderError.dailyLimit = error { break }
+                if attempt < tries {
+                    let wait: Double
+                    if case ProviderError.rateLimited(let retryAfter) = error { wait = min(60, (retryAfter ?? 10) + 1) } else { wait = retryDelay(attempt) }
+                    if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
                 }
             }
-            return [TranscriptLine(time: chunkStart, speaker: .others, text: "[Part of the meeting could not be transcribed]")]
         }
-        let previous = appendChain
-        appendChain = Task { [weak self] in
-            await previous?.value
-            let lines = await chunk.value
-            guard let self, !lines.isEmpty else { return }
-            self.meeting?.lines.append(contentsOf: lines)
-            if let m = self.meeting { self.onUpdate?(m) }
+        return .failure(last)
+    }
+
+    private func finish(_ result: Result<DetailedTranscript, Error>, chunk: AudioChunk, speaker: Speaker, request: ChunkRequest) {
+        switch result {
+        case .success(let transcript):
+            accept(transcript, map: chunk.map, voicedSeconds: chunk.voicedSeconds, speaker: speaker, request: request)
+        case .failure(let error):
+            noteDailyLimit(error)
+            if case ProviderError.missingKey = error {
+                markLost(map: chunk.map, seconds: chunk.voicedSeconds, speaker: speaker)
+                return
+            }
+            let held = HeldChunk(samples: chunk.samples, map: chunk.map, speaker: speaker, voicedSeconds: chunk.voicedSeconds)
+            for lost in hold.add(held) { markLost(map: lost.map, seconds: lost.voicedSeconds, speaker: lost.speaker) }
+        }
+    }
+
+    private func accept(_ transcript: DetailedTranscript, map: TimeMap, voicedSeconds: Double, speaker: Speaker, request: ChunkRequest) {
+        if speaker == .you { micLanguage = transcript.language ?? micLanguage } else { callLanguage = transcript.language ?? callLanguage }
+        // A forced language produced this if it isn't what auto-detect would be trusted to say on its own.
+        let viaOpinion = request.hint != nil || (transcript.language.map { $0 != "en" && request.plan.languages.contains($0) } ?? false)
+        if speaker == .you {
+            micSide.tracker.observe(language: transcript.language, viaOpinion: viaOpinion, listed: request.plan.languages)
+        } else {
+            callSide.tracker.observe(language: transcript.language, viaOpinion: viaOpinion, listed: request.plan.languages)
+        }
+        if HallucinationFilter.isLikelyHallucination(transcript.text, voicedSeconds: voicedSeconds) { return }
+        let lines = ChunkLines.lines(for: transcript, map: map, speaker: speaker, chunkFallbackTime: map.meetingTime(chunkSeconds: 0))
+        append(lines)
+    }
+
+    private func append(_ lines: [TranscriptLine]) {
+        guard !lines.isEmpty, var m = meeting else { return }
+        m.lines = TranscriptMerge.merge(existing: m.lines, incoming: lines)
+        meeting = m
+        onUpdate?(m)
+    }
+
+    private func markLost(map: TimeMap, seconds: Double, speaker: Speaker) {
+        lostSeconds += seconds
+        append([TranscriptLine(time: map.meetingTime(chunkSeconds: 0), speaker: speaker, text: TranscriptFilter.lostMarker)])
+    }
+
+    private func noteDailyLimit(_ error: Error) {
+        guard case ProviderError.dailyLimit = error, dailyLimit == nil, let e = error as? ProviderError else { return }
+        dailyLimit = e
+        onDailyLimit?("\(e) The rest of this meeting can't be transcribed until then.")
+    }
+
+    /// Second chance for chunks that failed. The marker appears only for what is still lost after this.
+    private func retryHeld(enabled: Bool) async {
+        let waiting = hold.takeAll()
+        guard !waiting.isEmpty, let settings else { return }
+        let deadline = Date().addingTimeInterval(Self.finalRetrySeconds)
+        for chunk in waiting {
+            guard enabled, dailyLimit == nil, Date() < deadline else {
+                markLost(map: chunk.map, seconds: chunk.voicedSeconds, speaker: chunk.speaker)
+                continue
+            }
+            let request = request(for: chunk.speaker, settings: settings)
+            let wav = AudioMath.wav(AudioMath.normalized(chunk.floatSamples))
+            let result = await Self.attempt(wav: wav, request: request, tries: Self.finalAttempts, transcribe: transcribe, retryDelay: retryDelay, log: log)
+            switch result {
+            case .success(let transcript):
+                accept(transcript, map: chunk.map, voicedSeconds: chunk.voicedSeconds, speaker: chunk.speaker, request: request)
+            case .failure(let error):
+                noteDailyLimit(error)
+                markLost(map: chunk.map, seconds: chunk.voicedSeconds, speaker: chunk.speaker)
+            }
+        }
+    }
+
+    private func writeGapNote() {
+        guard lostSeconds > 0 else { return }
+        let minutes = max(1, Int((lostSeconds / 60).rounded()))
+        if let dailyLimit {
+            meeting?.note = "\(dailyLimit) About \(minutes) min of speech could not be transcribed."
+        } else {
+            meeting?.note = "About \(minutes) min of speech could not be transcribed after retrying."
         }
     }
 }
