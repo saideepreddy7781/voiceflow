@@ -4,15 +4,25 @@ This is the direction of the project, with no dates attached. VoiceFlow is free 
 time, so things land when they are ready. If something here matters to you, say so on an issue or send a
 pull request.
 
+## Done in 0.2.0
+
+- Windows caught up with macOS: a new interface, meeting offers, Scratchpad, Insights, text before the cursor,
+  auto-learning and `@file` tags.
+- Each side of a meeting is transcribed separately, and Telugu, Hindi and mixed speech got a checked language
+  pipeline.
+- Real screenshots in the README and on the landing page.
+- A notice when a new release is out.
+
 ## Next
 
-- Windows catching up with macOS: meeting detection, Scratchpad, Insights, text before the cursor, and
-  auto-learning from your edits.
-- Real screenshots and a walkthrough in the README.
+- Real-world testing on Windows PCs, and a manual pass of the rebuilt Mac interface on real machines.
+- Accuracy figures for Telugu, Hindi and mixed speech from real speakers, in place of generated voices.
+- A screen recording of a real dictation for the README.
 - Automatic updates using a signed update feed, because downloading each release by hand means fixes reach
   people slowly.
 - Stronger safety checks: comparing the exact text field before typing, and asking for confirmation when
   Command Mode would replace more than half of a field.
+- Calendar titles and Export my data on Windows.
 
 ## Later
 

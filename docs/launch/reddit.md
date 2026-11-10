@@ -47,7 +47,7 @@ Bug reports are welcome. https://github.com/saideepreddy7781/voiceflow
 
 VoiceFlow lets you hold a key and speak, and cleaned-up text appears in any app. It's open source and free
 because people bring their own Groq key, so there are no accounts or servers for me to run. It also handles
-Telugu and Telugu-English, which Whisper's auto-detect often gets wrong.
+Telugu, Hindi and mixed speech, which Whisper's auto-detect often gets wrong.
 
 The hardest parts were [one real thing you struggled with].
 

@@ -30,7 +30,7 @@ For open-source-mac-os-apps, `applications.json`:
   "repo_url": "https://github.com/saideepreddy7781/voiceflow",
   "title": "VoiceFlow",
   "icon_url": "https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/docs/assets/icon.png",
-  "screenshots": [],
+  "screenshots": ["https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/docs/assets/screenshots/mac-home.png"],
   "official_site": "https://saideepreddy7781.github.io/voiceflow/",
   "languages": ["Swift", "C#"]
 }

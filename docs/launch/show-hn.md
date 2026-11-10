@@ -23,9 +23,11 @@ sends the transcript through a small cleanup model that removes filler words and
 like "Tuesday, no actually Wednesday". The macOS app is Swift and the Windows app is C#, with the prompts
 checked in CI to be identical on both.
 
-Telugu gets special handling. Whisper's auto-detect often hears Telugu as Hindi, Tamil or
-English, so when you pick both Telugu and English it transcribes both ways at once and keeps the right one. You
-can type it in Telugu script, mixed, or in English letters.
+Telugu and Hindi get special handling. Whisper's auto-detect often hears Telugu as Hindi, Tamil or English, so
+VoiceFlow checks each result against the languages you listed and asks Whisper again with the language forced
+when the text doesn't read right. You can type Telugu or Hindi in its script, mixed with English words, or in
+English letters. On 11 generated clips (macOS synthetic voices, 2026-11-10), mean word error rate went from 54%
+to 13% for Telugu and from 60% to 19% for Hindi. I don't have figures for real speakers yet.
 
 The tradeoffs, so you know before you try it:
 
@@ -35,7 +37,8 @@ The tradeoffs, so you know before you try it:
   dictate.
 - There's no paid Apple account behind this, so the Mac build isn't notarized. You click Open Anyway in System
   Settings once per version. Windows shows SmartScreen.
-- The Windows app is new. It passes automated checks on Windows runners and has had little use on real PCs.
+- The Windows app is new. It has passed automated checks on real Windows runners, and real-world testing on
+  people's PCs is still early.
 
 I'd like to hear where it breaks, especially on Windows and for non-English speech.
 

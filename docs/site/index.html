@@ -47,7 +47,9 @@ h2{font-size:clamp(30px,4.5vw,46px);font-weight:400;letter-spacing:-.015em;margi
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:34px 56px}
 .grid h3{font:15px var(--mono);margin:0 0 6px}
 .grid p{margin:0;color:#cfcfcf}
-.shot{display:flex;align-items:center;justify-content:center;text-align:center;min-height:320px;padding:24px;border:1px dashed var(--g);font:13px var(--mono);color:var(--g);margin-bottom:96px}
+.shot{margin:0 0 96px}
+.shot img{display:block;width:100%;height:auto;border:1px solid var(--l)}
+.shot figcaption{font:13px/1.6 var(--mono);color:var(--g);margin-top:12px}
 .honest{background:var(--w);color:var(--k);padding:clamp(28px,5vw,60px);margin-bottom:96px}
 .honest p{margin:0 0 18px;max-width:36em}
 .honest p:last-child{margin:0}
@@ -85,8 +87,10 @@ footer ul{display:flex;flex-wrap:wrap;gap:6px 20px;margin:0 0 14px;padding:0;lis
   <p class="typed">Let's meet on Wednesday at three.</p>
 </div>
 
-<!-- SCREENSHOT PLACEHOLDER: replace this block with the real Flow bar image in the README step. -->
-<div class="shot">Screenshot placeholder: the Flow bar while dictating, to be added before launch.</div>
+<figure class="shot">
+  <img src="images/flowbar-states.gif" width="1000" height="700" alt="Illustration of the Flow bar moving from listening to processing, then dictated text appearing in a note">
+  <figcaption>Illustration made from rendered frames of the real app with demo data. This isn't a recording of a live dictation.</figcaption>
+</figure>
 
 <section>
   <h2>What it does</h2>
@@ -94,21 +98,23 @@ footer ul{display:flex;flex-wrap:wrap;gap:6px 20px;margin:0 0 14px;padding:0;lis
     <div><h3>Dictate anywhere</h3><p>Hold Fn on a Mac or Ctrl + Win on Windows, or go hands-free for up to 20 minutes.</p></div>
     <div><h3>Cleanup</h3><p>Filler words go, spoken corrections apply, and lists get numbered. Choose None, Light or Medium.</p></div>
     <div><h3>Command Mode</h3><p>Select text and say "make this more formal" or "translate to Telugu".</p></div>
-    <div><h3>Notetaker</h3><p>A live transcript labelled You and Others, then a summary, decisions and action items saved as Markdown.</p></div>
-    <div><h3>Telugu and 40+ languages</h3><p>Telugu script, mixed, or Telish in English letters. Auto-detect covers the rest.</p></div>
+    <div><h3>Notetaker</h3><p>Your microphone and the call are transcribed separately, so You and Others are real labels. Then a summary, decisions and action items, saved as Markdown to a folder you choose.</p></div>
+    <div><h3>Telugu, Hindi and mixed speech</h3><p>Choose the script or English letters for Telugu and Hindi. Settings list 40 languages, and auto-detect covers others.</p></div>
     <div><h3>Dictionary and snippets</h3><p>Names you use, spelled right. Stored only on your computer.</p></div>
   </div>
 </section>
 
-<!-- SCREENSHOT PLACEHOLDER: replace this block with the real Home and history window image in the README step. -->
-<div class="shot">Screenshot placeholder: the Home window with history, to be added before launch.</div>
+<figure class="shot">
+  <img src="images/home.png" width="1400" height="949" alt="The VoiceFlow Home page on a Mac with searchable dictation history, showing demo data">
+  <figcaption>The Home page on a Mac, rendered from the real app with demo data.</figcaption>
+</figure>
 
 <div class="honest" id="know">
   <h2>What you should know first</h2>
-  <p><strong>Your audio goes to Groq.</strong> VoiceFlow has no servers of its own, and it sends speech and some text to Groq using your key. <a href="https://github.com/saideepreddy7781/voiceflow/blob/main/docs/PRIVACY.md">The privacy page</a> lists exactly what is sent.</p>
+  <p><strong>Your audio goes to Groq.</strong> VoiceFlow has no servers of its own, and dictation needs an internet connection and your Groq key. <a href="https://github.com/saideepreddy7781/voiceflow/blob/main/docs/PRIVACY.md">The privacy page</a> lists exactly what is sent. <a href="https://console.groq.com/docs/legal/services-agreement">Groq's agreement</a> bars training on your API data. Groq may keep logs for up to 30 days for reliability and abuse, and <a href="https://console.groq.com/docs/your-data">Zero Data Retention</a> in Groq's console stops that (read 2026-11-10).</p>
   <p><strong>macOS will warn you the first time.</strong> Builds aren't notarized, because that needs a paid Apple account and this project doesn't have one. Open the app once, then click Open Anyway in System Settings under Privacy &amp; Security.</p>
   <p><strong>Windows will warn you too.</strong> The executables aren't signed, so SmartScreen appears. Click More info, then Run anyway.</p>
-  <p><strong>The Windows app is new.</strong> It passes automated checks on Windows runners and has had little use on real PCs so far. Please report what breaks.</p>
+  <p><strong>The Windows app is new.</strong> It has passed automated checks on real Windows runners, and real-world testing on people's PCs is still early. Please report what breaks.</p>
 </div>
 
 <section id="install">

@@ -7,7 +7,10 @@ had 4 stars on 2026-11-10.
 
 - [ ] A release is out with the current features.
 - [ ] Signing secrets are set, so that release keeps macOS permissions across updates.
-- [ ] Real screenshots and a short GIF are in the README and on the landing page. The placeholders are gone.
+- [x] Real screenshots and a short GIF are in the README and on the landing page. The placeholders are gone.
+- [ ] Record about 15 seconds of a real dictation with the Flow bar visible and add it to the README. The GIF
+      there is an illustration made from rendered frames with demo data. A live recording is more convincing,
+      and only a real machine can make one.
 - [ ] You installed the release yourself on a clean Mac and on a real Windows PC, following the README word by word.
 - [ ] The repository has a description, topics, a social preview image (`docs/site/og.png`, Settings > General),
       the issue labels the forms use (`bug`, `enhancement`, `language`), and Pages turned on.

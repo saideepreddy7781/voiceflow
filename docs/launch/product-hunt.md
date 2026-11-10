@@ -22,4 +22,6 @@ Two things to know before you install. VoiceFlow sends your audio to Groq with y
 on-device. And the builds aren't notarized or signed by a paid certificate, so macOS asks you to click Open
 Anyway and Windows shows SmartScreen. I'd like to hear where it breaks.
 
-**Gallery:** use the real screenshots once they exist. Don't use mockups.
+**Gallery:** use `docs/assets/hero.png` and the images in `docs/assets/screenshots/`. They are rendered from the
+real app with demo data. `docs/assets/flowbar-states.gif` is an illustration of the Flow bar's states, so say so
+if you use it. Don't use mockups.
