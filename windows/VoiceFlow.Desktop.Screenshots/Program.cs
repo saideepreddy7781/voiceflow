@@ -3,6 +3,7 @@ using Page = VoiceFlow.Desktop.ViewModels.Page;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
+using Avalonia.Input;
 using Avalonia.LogicalTree;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
@@ -29,7 +30,7 @@ Directory.CreateDirectory(dir);
 
 AppBuilder.Configure<App>()
     .UseSkia()
-    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false, OverlayPopups = true })
     .SetupWithoutStarting();
 
 var issues = new StringBuilder();
@@ -47,7 +48,7 @@ static class ScreenRunner
 {
     static readonly DateTimeOffset Clock = new(2026, 11, 10, 18, 42, 0, TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 11, 10)));
 
-    static DemoServices NewServices() => new(Clock, animated: false);
+    static DemoServices NewServices(bool empty = false) => new(Clock, animated: false, empty: empty);
 
     public static void All(string dir, string theme, StringBuilder issues)
     {
@@ -59,15 +60,16 @@ static class ScreenRunner
 
     static void Shots(string dir, string theme, StringBuilder issues, double width, double height, string suffix)
     {
-        void Capture(string name, Action<ShellViewModel, DemoServices> arrange, Action<MainWindow, ShellViewModel>? after = null)
+        void Capture(string name, Action<ShellViewModel, DemoServices> arrange, Action<MainWindow, ShellViewModel>? after = null, bool empty = false)
         {
-            var services = NewServices();
+            var services = NewServices(empty);
             var shell = new ShellViewModel(services, Clock);
             var window = new MainWindow { DataContext = shell, Width = width, Height = height };
             arrange(shell, services);
             Host.Show(window);
             after?.Invoke(window, shell);
             Host.Save(window, Path.Combine(dir, $"{name}{suffix}-{theme}.png"), issues, $"{name}{suffix}-{theme}");
+            Host.AllowTransitions = false;
             window.Close();
         }
 
@@ -92,7 +94,7 @@ static class ScreenRunner
         {
             var section = i;
             Capture("settings-" + new[] { "general", "notetaker", "system", "keys", "privacy", "advanced", "about" }[i],
-                (s, _) => { s.Navigate(Page.Settings); s.Settings.Sections[section].IsSelected = true; });
+                (s, d) => { d.Microphone.StartTest(""); s.Navigate(Page.Settings); s.Settings.Sections[section].IsSelected = true; });
         }
         Capture("dialog-delete", (s, _) =>
         {
@@ -100,6 +102,36 @@ static class ScreenRunner
             s.Dictionary.Rows[0].DeleteCommand.Execute(null);
         });
         Capture("dialog-add-word", (s, _) => { s.Navigate(Page.Dictionary); s.Dictionary.AddCommand.Execute(null); });
+
+        // Empty states
+        foreach (var (name, page) in new[] { ("empty-home", Page.Home), ("empty-meetings", Page.Meetings), ("empty-insights", Page.Insights),
+                     ("empty-dictionary", Page.Dictionary), ("empty-snippets", Page.Snippets), ("empty-scratchpad", Page.Scratchpad) })
+            Capture(name, (s, _) => s.Navigate(page), empty: true);
+
+        // Focus ring and an open dropdown, the states a static capture would otherwise miss.
+        Capture("focus-ring", (s, _) => s.Navigate(Page.Dictionary), (w, _) =>
+        {
+            var button = w.GetVisualDescendants().OfType<Button>().First(b => b.Classes.Contains("primary"));
+            button.Focus(NavigationMethod.Tab);
+        });
+        Capture("dropdown-open", (s, _) => s.Navigate(Page.Settings), (w, _) =>
+        {
+            var combo = w.GetVisualDescendants().OfType<ComboBox>().First();
+            combo.IsDropDownOpen = true;
+        });
+        Capture("menu-open", (s, _) => { s.Navigate(Page.Home); s.Meetings.Selected = s.Meetings.Items[0]; }, (w, _) =>
+        {
+            var row = w.GetVisualDescendants().OfType<Border>().First(b => b.Classes.Contains("row"));
+            row.Classes.Add("previewHover");
+            row.GetVisualDescendants().OfType<Button>().Last().Flyout?.ShowAt(row);
+        });
+
+        // Runs the real page transition so its animation is exercised, then captures the settled page.
+        Capture("transition", (s, _) => s.Navigate(Page.Home), (w, s) =>
+        {
+            Host.AllowTransitions = true;
+            s.Navigate(Page.Insights);
+        });
     }
 
     static void PreviewHover(MainWindow w, ShellViewModel s)
@@ -115,7 +147,6 @@ static class ScreenRunner
         {
             var services = NewServices();
             var vm = new OnboardingViewModel(services, () => { }) { Step = i };
-            if (i == 2) services.Microphone.StartTest("");
             var window = new OnboardingWindow { DataContext = vm };
             Host.Show(window);
             Host.Save(window, Path.Combine(dir, $"onboarding-{names[i]}-{theme}.png"), issues, $"onboarding-{names[i]}-{theme}");
@@ -198,6 +229,8 @@ sealed class DemoServicesView(DemoServices inner, IDictationService dictation) :
 
 static class Host
 {
+    public static bool AllowTransitions { get; set; }
+
     public static void Show(Window window)
     {
         window.Show();
@@ -209,8 +242,11 @@ static class Host
     {
         for (int i = 0; i < 4; i++)
         {
-            foreach (var host in window.GetVisualDescendants().OfType<TransitioningContentControl>())
-                host.PageTransition = null;
+            if (!AllowTransitions)
+            {
+                foreach (var host in window.GetVisualDescendants().OfType<TransitioningContentControl>())
+                    host.PageTransition = null;
+            }
             Dispatcher.UIThread.RunJobs();
             AvaloniaHeadlessPlatform.ForceRenderTimerTick(8);
             Dispatcher.UIThread.RunJobs();

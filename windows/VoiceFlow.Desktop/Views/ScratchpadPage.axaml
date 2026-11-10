@@ -18,7 +18,6 @@
           </TextBox.InnerLeftContent>
         </TextBox>
       </StackPanel>
-      <TextBlock DockPanel.Dock="Bottom" Text="Alt + S opens Scratchpad from any app" Classes="caption subtle wrap" Margin="4,12,0,0"/>
       <ListBox ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="vm:NoteRow">

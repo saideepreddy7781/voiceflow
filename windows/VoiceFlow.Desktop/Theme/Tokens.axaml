@@ -25,6 +25,10 @@
       <SolidColorBrush x:Key="Track" Color="#2B2B2B"/>
       <SolidColorBrush x:Key="MeterFill" Color="#F2F2F2"/>
       <SolidColorBrush x:Key="Scrim" Color="#99000000"/>
+      <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#232323"/>
+      <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#38FFFFFF"/>
+      <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#232323"/>
+      <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#38FFFFFF"/>
       <Color x:Key="Heat0">#2A2A2A</Color>
       <Color x:Key="Heat1">#4D4D4D</Color>
       <Color x:Key="Heat2">#808080</Color>
@@ -55,6 +59,10 @@
       <SolidColorBrush x:Key="Track" Color="#E8E8E8"/>
       <SolidColorBrush x:Key="MeterFill" Color="#161616"/>
       <SolidColorBrush x:Key="Scrim" Color="#40000000"/>
+      <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#26000000"/>
+      <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFF"/>
+      <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#26000000"/>
       <Color x:Key="Heat0">#EBEBEB</Color>
       <Color x:Key="Heat1">#C4C4C4</Color>
       <Color x:Key="Heat2">#8F8F8F</Color>
@@ -69,6 +77,7 @@
   <FontFamily x:Key="FontMono">Cascadia Mono, Cascadia Code, Consolas, Menlo, monospace</FontFamily>
 
   <!-- 8 px rhythm. 12 is the one half step, used inside controls. -->
+  <CornerRadius x:Key="OverlayCornerRadius">8</CornerRadius>
   <CornerRadius x:Key="RadiusControl">6</CornerRadius>
   <CornerRadius x:Key="RadiusCard">12</CornerRadius>
   <CornerRadius x:Key="RadiusPill">999</CornerRadius>

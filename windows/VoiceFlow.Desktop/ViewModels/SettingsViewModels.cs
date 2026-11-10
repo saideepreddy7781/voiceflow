@@ -142,6 +142,8 @@ public sealed partial class GeneralSettings : ObservableObject
             AllLanguages.Add(new LanguageItem(code, name, chosen.Contains(code), SaveLanguages));
         ScriptOptions = Enum.GetValues<TeluguScript>()
             .Select(s => new TeluguScriptOption(s, s == Prefs.TeluguScript, SelectScript)).ToList();
+        _testLevel = services.Microphone.TestLevel;
+        _isTesting = services.Microphone.IsTesting;
         services.Microphone.TestLevelChanged += (_, _) =>
         {
             TestLevel = services.Microphone.TestLevel;
@@ -190,8 +192,7 @@ public sealed partial class GeneralSettings : ObservableObject
             var key = HotkeyInfo.DisplayName(Prefs.Hotkey);
             yield return new ShortcutRow("Hands-free", HotkeyInfo.HandsFree(Prefs.Hotkey), "Double-tap");
             yield return new ShortcutRow("Command Mode", $"{key} + {HotkeyInfo.CommandModifier(Prefs.Hotkey)}");
-            yield return new ShortcutRow("Paste last transcript", "Ctrl + Alt + V");
-            yield return new ShortcutRow("Open Scratchpad", "Alt + S");
+            yield return new ShortcutRow("Paste last transcript", "Alt + Shift + V");
             yield return new ShortcutRow("Cancel", "Esc");
         }
     }

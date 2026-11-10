@@ -25,6 +25,8 @@ public partial class App : Application
             var window = new MainWindow { DataContext = shell };
             desktop.MainWindow = window;
             shell.OnRunSetup = () => ShowOnboarding(services, window);
+            if (!services.Preferences.Current.Onboarded)
+                window.Opened += (_, _) => shell.OnRunSetup();
         }
         base.OnFrameworkInitializationCompleted();
     }

@@ -36,7 +36,7 @@
       <Border Classes="card" Padding="20">
         <StackPanel Spacing="12">
           <TextBlock Classes="callout muted wrap" Text="Groq does not keep your dictation by default. It may log inputs and outputs for up to 30 days, only to troubleshoot reliability problems or investigate suspected abuse."/>
-          <TextBlock Classes="callout muted wrap" Text="Zero Data Retention turns that logging off. Switch it on for your Groq account in Data Controls. VoiceFlow doesn't change this setting for you, and your account keeps it across all apps using that key."/>
+          <TextBlock Classes="callout muted wrap" Text="Zero Data Retention turns that logging off. Turn it on for your Groq organization in Data Controls. VoiceFlow cannot change this for you."/>
           <StackPanel Orientation="Horizontal" Spacing="16">
             <Button Classes="link" Command="{Binding OpenGroqDataControlsCommand}">
               <StackPanel Orientation="Horizontal" Spacing="4">

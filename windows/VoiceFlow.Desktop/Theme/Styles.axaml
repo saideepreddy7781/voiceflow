@@ -1,5 +1,5 @@
 <!-- Type scale and shared surfaces, applied by class. -->
-<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:c="using:VoiceFlow.Desktop.Controls">
+<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:c="using:VoiceFlow.Desktop.Controls" xmlns:prim="using:Avalonia.Controls.Primitives">
   <Style Selector="TextBlock">
     <Setter Property="FontFamily" Value="{DynamicResource FontText}"/>
     <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
@@ -187,7 +187,7 @@
   <Style Selector="Button, ToggleButton, RadioButton, CheckBox, ComboBox, ListBoxItem">
     <Setter Property="FocusAdorner">
       <FocusAdornerTemplate>
-        <Border BorderThickness="2" BorderBrush="{DynamicResource FocusRing}" CornerRadius="8" Margin="-2"/>
+        <Border BorderThickness="2" BorderBrush="{DynamicResource FocusRing}" CornerRadius="9" Margin="-4" prim:AdornerLayer.IsClipEnabled="False"/>
       </FocusAdornerTemplate>
     </Setter>
   </Style>

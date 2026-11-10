@@ -26,4 +26,10 @@
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
   <Import Project="..\VoiceFlow.Desktop\Build\NoAvaloniaGenerators.targets" />
+  <!-- SkiaSharp and HarfBuzz ship 100 MB of native .pdb files next to their DLLs; managed symbols are embedded already. -->
+  <Target Name="DropNativeSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -8,25 +8,40 @@ namespace VoiceFlow.Desktop.Services.Demo;
 /// <summary>Realistic demo data for design work and screenshots. Nothing here touches the network or disk.</summary>
 public sealed class DemoServices : IAppServices
 {
-    public DemoServices(DateTimeOffset? now = null, bool animated = true)
+    public DemoServices(DateTimeOffset? now = null, bool animated = true, bool empty = false)
     {
         var clock = now ?? DateTimeOffset.Now;
-        History = new DemoHistory(clock);
-        Meetings = new DemoMeetings(clock, animated);
-        Dictation = new DemoDictation();
+        var history = new DemoHistory(clock);
+        var meetings = new DemoMeetings(clock, animated);
+        var dictionary = new DemoDictionary();
+        var snippets = new DemoSnippets();
+        var scratchpad = new DemoScratchpad();
+        if (empty)
+        {
+            history.Clear();
+            meetings.Clear();
+            dictionary.Clear();
+            snippets.Clear();
+            scratchpad.Clear();
+        }
+        History = history;
+        Meetings = meetings;
+        Dictionary = dictionary;
+        Snippets = snippets;
+        Scratchpad = scratchpad;
     }
 
     public DemoSetup DemoSetup { get; } = new();
     public ISetupService Setup => DemoSetup;
     public IHistoryService History { get; }
     public IMeetingsService Meetings { get; }
-    public IDictionaryService Dictionary { get; } = new DemoDictionary();
-    public ISnippetsService Snippets { get; } = new DemoSnippets();
-    public IScratchpadService Scratchpad { get; } = new DemoScratchpad();
+    public IDictionaryService Dictionary { get; }
+    public ISnippetsService Snippets { get; }
+    public IScratchpadService Scratchpad { get; }
     public IPreferencesService Preferences { get; } = new DemoPreferences();
     public IMicrophoneService Microphone { get; } = new DemoMicrophone();
     public IKeyService Keys { get; } = new DemoKeys();
-    public IDictationService Dictation { get; }
+    public IDictationService Dictation { get; } = new DemoDictation();
     public IShellService Shell { get; } = new DemoShell();
     public IUpdateService Updates { get; } = new DemoUpdates();
     public IDiagnosticsService Diagnostics { get; } = new DemoDiagnostics();
@@ -50,6 +65,7 @@ sealed class DemoHistory : IHistoryService
 {
     readonly List<HistoryEntry> _entries = [];
     public DemoHistory(DateTimeOffset now) => Build(now);
+    public void Clear() => _entries.Clear();
     public IReadOnlyList<HistoryEntry> Entries => _entries;
     public event EventHandler? Changed;
 
@@ -183,6 +199,8 @@ sealed class DemoMeetings : IMeetingsService
         if (animated) _timer = new System.Threading.Timer(_ => Tick(), null, 500, 50);
     }
 
+    public void Clear() => _meetings.Clear();
+
     public Meeting LiveTemplate { get; }
     public IReadOnlyList<Meeting> Meetings => _meetings;
     public Meeting? Live { get; private set; }
@@ -262,6 +280,8 @@ sealed class DemoDictionary : IDictionaryService
         new("Ananya", "Anna ya", DictionarySource.AutoLearned),
     ];
 
+    public void Clear() => _entries.Clear();
+
     public IReadOnlyList<DictionaryEntry> Entries => _entries;
     public event EventHandler? Changed;
 
@@ -289,6 +309,8 @@ sealed class DemoSnippets : ISnippetsService
         new("meeting reply", "Thanks for reaching out. I'm free Tuesday or Thursday after 3 pm, whichever suits you."),
     ];
 
+    public void Clear() => _snippets.Clear();
+
     public IReadOnlyList<Snippet> Snippets => _snippets;
     public event EventHandler? Changed;
 
@@ -309,6 +331,8 @@ sealed class DemoSnippets : ISnippetsService
 sealed class DemoScratchpad : IScratchpadService
 {
     readonly List<Note> _notes;
+
+    public void Clear() => _notes.Clear();
 
     public DemoScratchpad()
     {
@@ -343,6 +367,7 @@ sealed class DemoPreferences : IPreferencesService
         Languages = ["en", "te", "hi"],
         TeluguScript = TeluguScript.Mixed,
         MeetingsFolder = "D:\\Notes\\Meetings",
+        Onboarded = true,
     };
 
     public event EventHandler? Changed;

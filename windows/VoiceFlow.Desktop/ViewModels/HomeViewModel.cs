@@ -120,7 +120,7 @@ public sealed partial class HomeViewModel : ObservableObject
         DictationsToday = todayEntries.Count.ToString("N0", CultureInfo.CurrentCulture);
         // Typing averages about 40 words a minute (the figure the Insights page uses).
         var saved = Math.Max(0, words / 40.0 - seconds / 60);
-        TimeSavedToday = saved < 1 ? "<1 min" : $"{Math.Round(saved)} min";
+        TimeSavedToday = words == 0 ? "0 min" : saved < 1 ? "<1 min" : $"{Math.Round(saved)} min";
         WordsThisWeek = UsageStats.Compute(entries, _now).WordsThisWeek.ToString("N0", CultureInfo.CurrentCulture);
         NoHistory = entries.Count == 0;
         RefreshList();

@@ -27,10 +27,10 @@
             <DataTemplate x:DataType="vm:SnippetRow">
               <Border Classes="row" Padding="20,12">
                 <Grid ColumnDefinitions="200,24,*,Auto">
-                  <TextBlock Text="{Binding Trigger}" FontSize="14" FontWeight="Medium" TextWrapping="Wrap"/>
-                  <PathIcon Grid.Column="1" Data="{StaticResource IconArrowRight}" Width="12" Height="12" Foreground="{DynamicResource FgSubtle}" VerticalAlignment="Top" Margin="0,4,0,0"/>
-                  <TextBlock Grid.Column="2" Text="{Binding Expansion}" Classes="body muted wrap" MaxLines="3" TextTrimming="CharacterEllipsis" Margin="0,0,16,0"/>
-                  <StackPanel Grid.Column="3" Classes="rowActions" Orientation="Horizontal" Spacing="2" VerticalAlignment="Top">
+                  <TextBlock Text="{Binding Trigger}" FontSize="14" FontWeight="Medium" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                  <PathIcon Grid.Column="1" Data="{StaticResource IconArrowRight}" Width="12" Height="12" Foreground="{DynamicResource FgSubtle}" VerticalAlignment="Center"/>
+                  <TextBlock Grid.Column="2" Text="{Binding Expansion}" Classes="body muted wrap" MaxLines="3" TextTrimming="CharacterEllipsis" Margin="0,0,16,0" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="3" Classes="rowActions" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button Classes="icon" Command="{Binding EditCommand}" ToolTip.Tip="Edit" AutomationProperties.Name="Edit snippet"><PathIcon Data="{StaticResource IconEdit}" Width="16" Height="16"/></Button>
                     <Button Classes="icon" Command="{Binding DeleteCommand}" ToolTip.Tip="Delete" AutomationProperties.Name="Delete snippet"><PathIcon Data="{StaticResource IconDelete}" Width="16" Height="16"/></Button>
                   </StackPanel>

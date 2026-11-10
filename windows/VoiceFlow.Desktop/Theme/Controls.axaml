@@ -201,7 +201,7 @@
           </Border.Transitions>
           <ContentPresenter x:Name="PART_ContentPresenter" Content="{TemplateBinding Content}"
                             ContentTemplate="{TemplateBinding ContentTemplate}" Padding="{TemplateBinding Padding}"
-                            VerticalAlignment="Center"
+                            VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}" RecognizesAccessKey="True"
                             HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
                             VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/>
         </Border>
@@ -307,7 +307,7 @@
         <ContentPresenter x:Name="PART_ContentPresenter" Background="{TemplateBinding Background}"
                           BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                           CornerRadius="{TemplateBinding CornerRadius}" Content="{TemplateBinding Content}"
-                          Foreground="{TemplateBinding Foreground}"
+                          Foreground="{TemplateBinding Foreground}" RecognizesAccessKey="True"
                           Padding="{TemplateBinding Padding}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
       </ControlTemplate>
     </Setter>
@@ -425,6 +425,33 @@
       <Style Selector="^:focus-within /template/ Border#Root">
         <Setter Property="BorderBrush" Value="Transparent"/>
       </Style>
+    </Style>
+  </ControlTheme>
+
+  <!-- Dropdown and menu rows share the list-row hover and selection. -->
+  <ControlTheme x:Key="{x:Type ComboBoxItem}" TargetType="ComboBoxItem">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource RadiusControl}"/>
+    <Setter Property="Padding" Value="12,6"/>
+    <Setter Property="Margin" Value="4,1"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="Template">
+      <ControlTemplate>
+        <ContentPresenter x:Name="PART_ContentPresenter" Background="{TemplateBinding Background}"
+                          CornerRadius="{TemplateBinding CornerRadius}" Content="{TemplateBinding Content}"
+                          ContentTemplate="{TemplateBinding ContentTemplate}" Foreground="{TemplateBinding Foreground}"
+                          Padding="{TemplateBinding Padding}"
+                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                          VerticalContentAlignment="Center"/>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource HoverFill}"/>
+    </Style>
+    <Style Selector="^:selected /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SelectedFill}"/>
     </Style>
   </ControlTheme>
 

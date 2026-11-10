@@ -22,7 +22,7 @@
             <Border Classes="keycap"><TextBlock Text="{Binding Command}"/></Border>
           </c:SettingRow>
           <c:SettingRow Title="Paste last transcript">
-            <Border Classes="keycap"><TextBlock Text="Ctrl + Alt + V"/></Border>
+            <Border Classes="keycap"><TextBlock Text="Alt + Shift + V"/></Border>
           </c:SettingRow>
           <c:SettingRow Title="Cancel">
             <Border Classes="keycap"><TextBlock Text="Esc"/></Border>
@@ -34,7 +34,7 @@
         <TextBlock Classes="body muted wrap" Text="Correct yourself out loud. Say Tuesday, no actually Wednesday, and VoiceFlow types Wednesday."/>
         <TextBlock Classes="body muted wrap" Text="Say new line, new paragraph, comma or question mark when you want them exactly."/>
         <TextBlock Classes="body muted wrap" Text="Select text, hold the Command Mode keys and say make this more formal or translate to Hindi."/>
-        <TextBlock Classes="body muted wrap" Text="Nothing typed? Paste your last transcript with Ctrl + Alt + V."/>
+        <TextBlock Classes="body muted wrap" Text="Nothing typed? Paste your last transcript with Alt + Shift + V."/>
       </StackPanel>
       <StackPanel Orientation="Horizontal" Spacing="8">
         <Button Content="Documentation" Command="{Binding OpenDocsCommand}"/>

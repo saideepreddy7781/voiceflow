@@ -3,7 +3,7 @@
              xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
              x:Class="VoiceFlow.Desktop.Views.SnippetEditDialog"
              x:DataType="vm:SnippetEditViewModel">
-  <Border Classes="card" Width="480" Padding="24" BoxShadow="0 16 48 0 #55000000">
+  <Border Classes="card" Width="480" Padding="24" BoxShadow="0 8 24 0 #33000000">
     <StackPanel Spacing="16">
       <TextBlock Text="{Binding Heading}" Classes="h2"/>
       <StackPanel Spacing="4">

@@ -61,6 +61,9 @@ public sealed partial class OnboardingViewModel : ObservableObject
 
     partial void OnStepChanged(int value)
     {
+        // The microphone step runs its meter as soon as it opens, like the Mac flow.
+        if (value == 2) _services.Microphone.StartTest(_services.Preferences.Current.InputDeviceId);
+        else if (_services.Microphone.IsTesting) _services.Microphone.StopTest();
         OnPropertyChanged(string.Empty);
         UpdatePills();
     }
