@@ -9,17 +9,27 @@ public protocol MeetingAudioSource: AnyObject {
     func stopCapture()
     /// Takes everything captured since the last call, as 16 kHz mono samples.
     func drainSamples() -> [Float]
+    /// Tries to bring back a source that stopped delivering audio.
+    func restartCapture()
+}
+
+public extension MeetingAudioSource {
+    func restartCapture() {}
 }
 
 /// The microphone as a meeting source.
 @MainActor
 final class MicSource: MeetingAudioSource {
-    private let recorder = AudioRecorder()
+    private let recorder: AudioRecorder
     private let deviceUID: String?
-    init(deviceUID: String?) { self.deviceUID = deviceUID }
+    init(deviceUID: String?, recorder: AudioRecorder = AudioRecorder()) {
+        self.deviceUID = deviceUID
+        self.recorder = recorder
+    }
     func startCapture() throws { try recorder.start(deviceUID: deviceUID) }
     func stopCapture() { recorder.stop() }
     func drainSamples() -> [Float] { recorder.drain() }
+    func restartCapture() { recorder.restartMicrophone() }
 }
 
 @available(macOS 14.2, *)
@@ -82,6 +92,7 @@ public final class MeetingRecorder {
     /// Appends each chunk's lines in order, exactly once.
     private var appendChain: Task<Void, Never>?
     private var heardSpeech = false
+    private var micMonitor = MicHealthMonitor()
 
     public private(set) var meeting: Meeting?
     public private(set) var isRecording = false
@@ -91,6 +102,12 @@ public final class MeetingRecorder {
     public private(set) var systemLevel: Float = 0
     /// Seconds in a row the meeting audio has been digital silence (often: system audio permission missing).
     public private(set) var systemSilentSeconds = 0
+    /// Whether the microphone is delivering usable audio. A meeting keeps recording through any of these.
+    public private(set) var micHealth: MicHealthState = .healthy
+    /// Seconds of this meeting with no usable microphone audio.
+    public private(set) var micMissingSeconds = 0
+    /// Restarts requested because the microphone stalled.
+    public private(set) var micRestartsRequested = 0
     /// Called on the main actor whenever new transcript lines arrive.
     public var onUpdate: ((Meeting) -> Void)?
 
@@ -150,6 +167,10 @@ public final class MeetingRecorder {
         isRecording = true
         heardSpeech = false
         systemSilentSeconds = 0
+        micMonitor = MicHealthMonitor()
+        micHealth = .healthy
+        micMissingSeconds = 0
+        micRestartsRequested = 0
         pendingMic = []; pendingSystem = []; queuedMic = []; queuedSystem = []
         sentSamples = 0
         appendChain = nil
@@ -167,6 +188,7 @@ public final class MeetingRecorder {
         timer?.invalidate()
         timer = nil
         tick(final: true)
+        if micMissingSeconds > 0 { meeting?.micMissingSeconds = micMissingSeconds }
         mic?.stopCapture()
         system?.stopCapture()
         mic = nil
@@ -188,6 +210,7 @@ public final class MeetingRecorder {
         let newMic = mic?.drainSamples() ?? []
         queuedMic.append(contentsOf: newMic)
         micLevel = AudioMath.level(newMic.suffix(1_600)[...])
+        if !final { updateMicHealth(newMic) }
         if let system {
             let newSystem = system.drainSamples()
             systemLevel = AudioMath.level(newSystem.suffix(1_600)[...])
@@ -220,6 +243,19 @@ public final class MeetingRecorder {
             sentSamples += range.upperBound
             if pendingMic.isEmpty { break }
         }
+    }
+
+    /// Notices a microphone that stopped working: the zero padding below keeps the meeting aligned, so
+    /// without this a dead microphone looks exactly like a person who is not talking.
+    private func updateMicHealth(_ samples: [Float]) {
+        let silent = !samples.isEmpty && MicHealthMonitor.isDigitallySilent(samples)
+        if samples.isEmpty || silent { micMissingSeconds += 1 }
+        let decision = micMonitor.observe(sampleCount: samples.count, digitallySilent: silent)
+        micHealth = decision.state
+        guard decision.restart else { return }
+        micRestartsRequested += 1
+        log.notice("Microphone stalled (\(decision.state.rawValue, privacy: .public)); restarting")
+        mic?.restartCapture()
     }
 
     private func take(_ array: inout [Float], _ n: Int) -> [Float] {

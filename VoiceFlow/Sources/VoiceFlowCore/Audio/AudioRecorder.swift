@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-import AudioToolbox
 import Foundation
 import os
 
@@ -35,7 +34,8 @@ final class Flag: @unchecked Sendable {
     var value = false
 }
 
-/// Captures the microphone as 16 kHz mono Float32.
+/// One subscriber's handle on the microphone: 16 kHz mono Float32 samples of its own.
+/// The hardware is shared through `SharedMicrophone`, so any number of recorders can run together.
 @MainActor
 public final class AudioRecorder {
     public enum RecorderError: Error, CustomStringConvertible {
@@ -54,16 +54,17 @@ public final class AudioRecorder {
         }
     }
 
-    private let log = Logger(subsystem: "com.saideep.voiceflow", category: "audio")
-    private var engine: AVAudioEngine?
-    private let buffer = SampleBuffer()
-    private var deviceUID: String?
-    private var configObserver: NSObjectProtocol?
-    public private(set) var isRecording = false
-    /// How many times the engine was restarted after macOS changed the input (for diagnostics).
-    public private(set) var restarts = 0
+    private let microphone: SharedMicrophone
+    private var subscription: MicSubscription?
+    private var restartsAtStart = 0
 
-    public init() {}
+    public var isRecording: Bool { subscription != nil }
+    /// How many times the engine was rebuilt during this recording (for diagnostics).
+    public var restarts: Int { microphone.restartCount - restartsAtStart }
+
+    public init(microphone: SharedMicrophone = .shared) {
+        self.microphone = microphone
+    }
 
     // MARK: Permission
 
@@ -75,75 +76,22 @@ public final class AudioRecorder {
 
     // MARK: Recording
 
-    /// Starts capture. `deviceUID` nil means the system default input.
+    /// Starts capture. `deviceUID` nil means the system default input. While another recorder is running
+    /// the device it opened is shared, whatever is passed here.
     public func start(deviceUID: String?) throws {
         guard !isRecording else { return }
-        guard Self.microphoneStatus == .authorized else { throw RecorderError.microphoneDenied }
-        buffer.reset()
-        self.deviceUID = deviceUID
-        restarts = 0
-        try startEngine()
-        isRecording = true
+        subscription = try microphone.subscribe(deviceUID: deviceUID)
+        restartsAtStart = microphone.restartCount
     }
 
-    /// Builds and starts an engine. Also used to recover after a configuration change: AVAudioEngine stops
-    /// itself when the input's format changes (AirPods entering call mode when Zoom opens the mic).
-    private func startEngine() throws {
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        if let deviceUID, let device = AudioDevices.device(uid: deviceUID), let unit = input.audioUnit {
-            var id = device.id
-            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                 &id, UInt32(MemoryLayout<AudioDeviceID>.size))
-        }
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { throw RecorderError.noInput }
-        guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: AudioMath.sampleRate, channels: 1, interleaved: false),
-              let converter = AVAudioConverter(from: inputFormat, to: target) else { throw RecorderError.converter }
-
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat,
-                         block: Self.makeTapBlock(converter: converter, target: target, inputFormat: inputFormat, sink: buffer))
-
-        do {
-            engine.prepare()
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            throw RecorderError.engine(error.localizedDescription)
-        }
-        self.engine = engine
-        configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
-                                                                queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.recoverFromConfigurationChange() }
-        }
-        log.info("Recording started (\(inputFormat.sampleRate, privacy: .public) Hz input)")
-    }
-
-    private func recoverFromConfigurationChange() {
-        guard isRecording else { return }
-        tearDownEngine()
-        do {
-            try startEngine()
-            restarts += 1
-            log.notice("Microphone changed; recording restarted")
-        } catch {
-            log.error("Microphone could not restart: \(String(describing: error), privacy: .public)")
-        }
-    }
-
-    private func tearDownEngine() {
-        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
-        configObserver = nil
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
-        engine = nil
-    }
+    /// Asks for the microphone to be rebuilt after it stalled. Other recorders stay attached.
+    public func restartMicrophone() { microphone.restart() }
 
     /// The tap block runs on a CoreAudio thread, never the main thread. It is built in a nonisolated
     /// static function so Swift does not infer main-actor isolation for it; an isolated block traps
     /// at runtime the first time CoreAudio calls it.
     nonisolated static func makeTapBlock(converter: AVAudioConverter, target: AVAudioFormat,
-                                         inputFormat: AVAudioFormat, sink: SampleBuffer) -> AVAudioNodeTapBlock {
+                                         inputFormat: AVAudioFormat, sink: any SampleSink) -> AVAudioNodeTapBlock {
         { pcm, _ in
             let ratio = target.sampleRate / inputFormat.sampleRate
             let capacity = AVAudioFrameCount(Double(pcm.frameLength) * ratio) + 32
@@ -164,22 +112,23 @@ public final class AudioRecorder {
     /// Stops capture and returns everything recorded.
     @discardableResult
     public func stop() -> [Float] {
-        guard isRecording else { return [] }
-        tearDownEngine()
-        isRecording = false
-        return buffer.snapshot()
+        guard let subscription else { return [] }
+        let samples = subscription.buffer.snapshot()
+        microphone.unsubscribe(subscription)
+        self.subscription = nil
+        return samples
     }
 
     /// Samples so far (for segmenting while recording).
-    public func samples() -> [Float] { buffer.snapshot() }
-    public func samples(from start: Int) -> [Float] { buffer.copy(from: start) }
+    public func samples() -> [Float] { subscription?.buffer.snapshot() ?? [] }
+    public func samples(from start: Int) -> [Float] { subscription?.buffer.copy(from: start) ?? [] }
 
     /// Takes everything recorded since the last call (meetings, where keeping an hour of audio would use too much memory).
-    public func drain() -> [Float] { buffer.drain() }
-    public var sampleCount: Int { buffer.count }
+    public func drain() -> [Float] { subscription?.buffer.drain() ?? [] }
+    public var sampleCount: Int { subscription?.buffer.count ?? 0 }
 
     /// 0...1 level of the last 50 ms, for the waveform.
     public func currentLevel() -> Float {
-        AudioMath.level(buffer.tail(800)[...])
+        AudioMath.level((subscription?.buffer.tail(800) ?? [])[...])
     }
 }

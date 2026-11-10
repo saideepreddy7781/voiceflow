@@ -95,6 +95,8 @@ public struct Meeting: Codable, Hashable, Sendable, Identifiable {
     public var micOnly = false
     /// The Markdown file last written to the notes folder, so a rename replaces it.
     public var syncedFileName: String?
+    /// Seconds with no usable microphone audio, when the microphone failed during the meeting.
+    public var micMissingSeconds: Int?
 
     public init(title: String, start: Date = Date(), app: String = "") {
         self.title = title
