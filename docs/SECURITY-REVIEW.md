@@ -60,7 +60,7 @@ intend, so safety rules are enforced in code and covered by tests (`SecurityTest
 | Other people's speech | Recording without consent is illegal in some places. | A consent reminder on every start (on by default), and the README and privacy page say so. |
 | Meeting transcript as model input | Someone on the call could say instructions aimed at the notes writer. | The prompt treats the transcript as a record, never instructions. The output is only displayed and saved as text; nothing is executed or typed into other apps. |
 | Memory on long meetings | An hour of audio is ~230 MB per stream. | Audio is drained every second; only the current chunk (≤45 s) is kept. Nothing is written to disk. |
-| Free-tier limits | A two-stream meeting would use the whole hourly transcription allowance. | Both streams are mixed into one upload; speakers are separated afterwards by comparing the two sources. Long notes are written in parts and wait out rate limits. |
+| Free-tier limits | A two-stream meeting could use the whole hourly transcription allowance. | Each stream uploads only voiced audio through one rate-aware queue. Long notes are written in parts and wait out rate limits. |
 | Calendar | Event titles and attendee names are personal data. | Off by default; read only at meeting start; never sent anywhere except as names inside the notes request. |
 | Sync folder | Notes are written outside VoiceFlow's folder. | Only to the folder you choose; file names are sanitized; renaming a meeting replaces its old file. |
 | Telugu auto-detect | Whisper heard Telugu as Hindi; forcing Telugu turned English into nonsense. | Auto-detect first, and a second pass in Telugu only when the detected language is not one you speak. |

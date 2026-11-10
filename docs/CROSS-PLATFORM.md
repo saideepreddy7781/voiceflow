@@ -17,18 +17,18 @@ app. What is shared is everything that does not touch the OS.
 | Read focused field | | Accessibility (AXUIElement) | UI Automation (password check; selection via Ctrl+C) | AT-SPI |
 | Insert text | | AX write, or ⌘V with clipboard restore | `SendInput` Ctrl+V (Shift+Insert in terminals) with clipboard restore | AT-SPI / `wtype` / `xdotool` |
 | Secret storage | | Keychain | Windows Credential Manager | libsecret |
-| Floating bar | | NSPanel (non-activating) | WinForms topmost tool window, `WS_EX_NOACTIVATE` | Layer-shell / override-redirect |
+| Floating bar | | NSPanel (non-activating) | Avalonia borderless window, `WS_EX_NOACTIVATE` | Layer-shell / override-redirect |
 | Packaging | | Universal DMG, self-signed or ad hoc, not notarized (see [RELEASING.md](RELEASING.md)) | Single self-contained `.exe` per architecture, unsigned | AppImage / Flatpak |
 
 ## Windows stack
 
-**C# on .NET 8 with WinForms**, code-only UI. Windows' text APIs (UI Automation, low-level keyboard
+**C# on .NET 8 with Avalonia.** Windows' text APIs (UI Automation, low-level keyboard
 hooks, `SendInput`, Credential Manager) are first-class in .NET. `VoiceFlow.Core` targets plain `net8.0`,
 so the shared logic and its tests run on any OS; only `VoiceFlow.Windows` needs Windows.
 
 Windows specifics handled in the app:
 - Most Windows keyboards do not report Fn to software, so the default is the **Ctrl + Win** chord.
-- Low-level keyboard hooks must return quickly or Windows silently removes them; work is posted to the UI thread.
+- Low-level keyboard hooks must return quickly or Windows silently removes them, so the hook has its own thread and posts work to the UI thread.
 - Releasing Win opens the Start menu; an unassigned key (VK 0xE8) is sent first to suppress it.
 - Apps running as Administrator do not accept input from a non-elevated app (UIPI). VoiceFlow leaves the
   text on the clipboard instead; do not run VoiceFlow elevated.

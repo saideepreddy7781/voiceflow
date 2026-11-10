@@ -37,10 +37,11 @@ field's text then go to the command prompt, and the result replaces the selectio
 
 ## Notetaker
 
-Notetaker records only after you start it. It mixes your microphone with system audio (macOS Core Audio
-process tap, Windows WASAPI loopback) into one stream, uploads pieces of 20 to 45 seconds to Groq, labels
-speakers You and Others by comparing the two sources, and writes the summary with the notes prompt. Audio is
-never written to disk.
+Notetaker records only after you start it. It keeps your microphone and system audio (macOS Core Audio
+process tap, Windows WASAPI loopback) as separate streams, so You and Others are real labels. Only voiced audio
+goes to Groq, through a rate-aware queue that gives dictation priority. The two sides are merged into one
+time-ordered transcript, echo from speakers is removed, and the summary is written with the notes prompt. Audio
+is never written to disk. [LANGUAGE-PIPELINE.md](LANGUAGE-PIPELINE.md) has the details.
 
 ## Where things live
 
