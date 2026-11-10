@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using VoiceFlow.Core.Diagnostics;
 using VoiceFlow.Core.Text;
 
 namespace VoiceFlow.Core.Library;
@@ -153,6 +155,9 @@ public sealed class HistoryEntry
     public int LatencyMs { get; set; }
     /// <summary>"inserted", "pasted", "copied", "search", "answer", "failed".</summary>
     public string Outcome { get; set; } = "";
+    /// <summary>Why it ended this way. Entries saved before reason codes read as Unknown.</summary>
+    [JsonConverter(typeof(DeliveryReasonJsonConverter))]
+    public DeliveryReason Reason { get; set; } = DeliveryReason.Unknown;
     public UsageCategory? Usage { get; set; }
     public int? WordsCorrected { get; set; }
     public int? DictionaryFixes { get; set; }

@@ -10,6 +10,8 @@ public interface IMeetingAudioSource : IDisposable
     void StopCapture();
     /// <summary>Takes everything captured since the last call, as 16 kHz mono samples.</summary>
     float[] DrainSamples();
+    /// <summary>Seconds of audio lost to device restarts since the last call. Sources that cannot tell report 0.</summary>
+    double DrainGapSeconds() => 0;
 }
 
 /// <summary>
@@ -57,6 +59,8 @@ public sealed class MeetingRecorder
     public float SystemLevel { get; private set; }
     /// <summary>Seconds in a row the meeting audio has been digital silence.</summary>
     public int SystemSilentSeconds { get; private set; }
+    /// <summary>Shorter gaps are normal: a device restarting, a driver catching up.</summary>
+    const double MinimumReportedGap = 2;
     /// <summary>Called whenever new transcript lines arrive, with a copy of the meeting.</summary>
     public event Action<Meeting>? Updated;
 
@@ -141,6 +145,7 @@ public sealed class MeetingRecorder
         await _appendChain;
         lock (_gate)
         {
+            AddGapLines();
             if (_meeting is { Lines.Count: 0 })
             {
                 _meeting.Error = _heardSpeech
@@ -177,7 +182,15 @@ public sealed class MeetingRecorder
     public void Tick(bool final = false)
     {
         if (!IsRecording) return;
+        var micGap = _mic?.DrainGapSeconds() ?? 0;
         var newMic = _mic?.DrainSamples() ?? [];
+        // With system audio the lag check below pads the mic; a mic-only meeting has only this report to go on.
+        if (_system == null && micGap > 0)
+        {
+            var missing = (int)(micGap * AudioMath.SampleRate);
+            NoteMicGap(MicTimeline, missing);
+            _queuedMic.AddRange(new float[missing]);
+        }
         _queuedMic.AddRange(newMic);
         MicLevel = AudioMath.Level(newMic.AsSpan(Math.Max(0, newMic.Length - 1_600)));
         if (_system != null)
@@ -191,7 +204,11 @@ public sealed class MeetingRecorder
             var twoSeconds = (int)AudioMath.SampleRate * 2;
             var lag = _queuedMic.Count - _queuedSystem.Count;
             if (lag > twoSeconds) _queuedSystem.AddRange(new float[lag]);
-            if (-lag > twoSeconds) _queuedMic.AddRange(new float[-lag]);
+            if (-lag > twoSeconds)
+            {
+                NoteMicGap(MicTimeline, -lag);
+                _queuedMic.AddRange(new float[-lag]);
+            }
             var n = final ? Math.Max(_queuedMic.Count, _queuedSystem.Count) : Math.Min(_queuedMic.Count, _queuedSystem.Count);
             _pendingMic.AddRange(Take(_queuedMic, n));
             _pendingSystem.AddRange(Take(_queuedSystem, n));
@@ -218,6 +235,40 @@ public sealed class MeetingRecorder
             _sentSamples += end;
             if (_pendingMic.Count == 0) break;
         }
+    }
+
+    /// <summary>Samples of microphone timeline so far: sent, pending and queued.</summary>
+    int MicTimeline => _sentSamples + _pendingMic.Count + _queuedMic.Count;
+
+    /// <summary>Records that your voice is missing here, so the meeting says so instead of padding silently.</summary>
+    void NoteMicGap(int startSample, int samples)
+    {
+        var start = startSample / AudioMath.SampleRate;
+        var seconds = samples / AudioMath.SampleRate;
+        lock (_gate)
+        {
+            if (_meeting == null) return;
+            var gaps = _meeting.MicGaps;
+            // A stall that lasts minutes is padded a tick at a time. It is still one gap.
+            if (gaps.Count > 0 && start <= gaps[^1].Time + gaps[^1].Seconds + 3)
+                gaps[^1] = gaps[^1] with { Seconds = Math.Max(gaps[^1].Seconds, start + seconds - gaps[^1].Time) };
+            else if (seconds >= MinimumReportedGap)
+                gaps.Add(new MicGap(start, seconds));
+        }
+    }
+
+    /// <summary>
+    /// Marks each gap in the transcript. Call with the lock held, after every chunk has landed. A meeting with no
+    /// real lines stays empty, so it reports "no speech" instead of writing notes about a marker.
+    /// </summary>
+    void AddGapLines()
+    {
+        if (_meeting is not { Lines.Count: > 0 } m) return;
+        var marks = m.MicGaps.Where(g => g.Seconds >= MinimumReportedGap)
+            .Select(g => new TranscriptLine(g.Time, Speaker.You, $"[Your microphone was not recording for {Math.Round(g.Seconds)} seconds]"))
+            .ToList();
+        if (marks.Count == 0) return;
+        m.Lines = m.Lines.Concat(marks).OrderBy(l => l.Time).ToList();
     }
 
     static float[] Take(List<float> list, int n)

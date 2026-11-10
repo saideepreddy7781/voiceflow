@@ -1,7 +1,10 @@
 using VoiceFlow.Core;
 using VoiceFlow.Core.AI;
+using VoiceFlow.Core.Audio;
+using VoiceFlow.Core.Diagnostics;
 using VoiceFlow.Core.Meetings;
 using VoiceFlow.Windows.Audio;
+using VoiceFlow.Windows.Dictation;
 using VoiceFlow.Windows.UI;
 
 namespace VoiceFlow.Windows.Meetings;
@@ -18,8 +21,14 @@ internal sealed class Notetaker : IDisposable
     readonly FlowBarController _bar;
     readonly MeetingRecorder _recorder;
     readonly JsonFile<List<Meeting>> _store;
+    readonly SharedMicrophone _microphone;
+    readonly DeliveryLog _deliveries;
     readonly System.Windows.Forms.Timer _tick = new() { Interval = 1000 };
+    readonly Action<MicHealthSnapshot> _onMicHealth;
     bool _warnedSilentSystem;
+    bool _warnedSilentMic;
+    bool _micProblem;
+    bool _micToastShown;
 
     public List<Meeting> Meetings { get; private set; }
     public State Current { get; private set; } = State.Idle;
@@ -32,15 +41,22 @@ internal sealed class Notetaker : IDisposable
     public bool IsRecording => Current == State.Recording;
     public float MicLevel => _recorder.MicLevel;
     public float SystemLevel => _recorder.SystemLevel;
+    /// <summary>The shared microphone's state, for a status line in the UI.</summary>
+    public MicHealthSnapshot MicHealth => _microphone.Health;
 
     public event Action? Changed;
+    /// <summary>Raised on the UI thread when the microphone's health changes while a meeting records.</summary>
+    public event Action<MicHealthSnapshot>? MicHealthChanged;
     public Action OpenMeetingsPage { get; set; } = () => { };
     public Func<bool> DictationBusy { get; set; } = () => false;
 
-    public Notetaker(AppModel model, FlowBarController bar)
+    /// <param name="microphone">The shared capture. Null uses the app's one.</param>
+    public Notetaker(AppModel model, FlowBarController bar, SharedMicrophone? microphone = null)
     {
         _model = model;
         _bar = bar;
+        _microphone = microphone ?? MicrophoneHub.Shared;
+        _deliveries = AppDiagnostics.LogFor(model);
         _store = new JsonFile<List<Meeting>>("meetings.json", model.DataFolder);
         Meetings = (_store.Load() ?? []).Select(m =>
         {
@@ -51,13 +67,49 @@ internal sealed class Notetaker : IDisposable
             return m;
         }).ToList();
         _recorder = new MeetingRecorder(
-            s => new CaptureMeetingSource(s.MicDeviceId, loopback: false),
+            s => new SharedMicMeetingSource(_microphone, s.MicDeviceId),
             () => new CaptureMeetingSource(null, loopback: true),
             logError: message => Logger.Error(message));
         // Updates are raised from the upload chain; state is only touched on the UI thread.
         var ui = SynchronizationContext.Current ?? throw new InvalidOperationException("Notetaker must be created on the UI thread.");
         _recorder.Updated += meeting => ui.Post(_ => OnUpdate(meeting), null);
+        _onMicHealth = health => ui.Post(_ => OnMicHealth(health), null);
+        _microphone.HealthChanged += _onMicHealth;
         _tick.Tick += (_, _) => Tick();
+    }
+
+    /// <summary>
+    /// Tells the user when the microphone stops delivering audio during a meeting. A restart in progress stays
+    /// quiet: most succeed in under a second, and the transcript marks any audio that was lost.
+    /// </summary>
+    void OnMicHealth(MicHealthSnapshot health)
+    {
+        if (Current != State.Recording) return;
+        MicHealthChanged?.Invoke(health);
+        switch (health.Status)
+        {
+            case MicHealthStatus.DeadSignal:
+                _micProblem = true;
+                _deliveries.Record(new DeliveryLogEntry(DeliverySession.Meeting, DeliveryReason.MicFailed, DeliveryDetail.DeadSignal));
+                // Once per meeting: noise-gating software sends real zeros between sentences and looks like this too.
+                if (_warnedSilentMic) break;
+                _warnedSilentMic = true;
+                _micToastShown = true;
+                _bar.Show("Not hearing your microphone", "It is sending silence. If you didn't mute it, check the input in Settings. The meeting keeps recording.", seconds: 12);
+                break;
+            case MicHealthStatus.Failed:
+                _micProblem = true;
+                _micToastShown = true;
+                _deliveries.Record(new DeliveryLogEntry(DeliverySession.Meeting, DeliveryReason.MicFailed, DeliveryDetail.DeviceLost));
+                _bar.Show("Not hearing your microphone", "VoiceFlow lost your mic and couldn't get it back. Check the input in Settings. The meeting keeps recording.", seconds: 12);
+                break;
+            case MicHealthStatus.Healthy when _micProblem:
+                _micProblem = false;
+                _deliveries.Record(new DeliveryLogEntry(DeliverySession.Meeting, DeliveryReason.MicRecovered));
+                if (_micToastShown) _bar.Show("Your microphone is back", seconds: 4);
+                _micToastShown = false;
+                break;
+        }
     }
 
     void Save()
@@ -88,9 +140,13 @@ internal sealed class Notetaker : IDisposable
         }
         catch (Exception e) when (e is AudioCaptureException or InvalidOperationException)
         {
+            _deliveries.Record(new DeliveryLogEntry(DeliverySession.Meeting, DeliveryReason.MicFailed, DeliveryDetail.StartFailed));
             _bar.Show("Notetaker could not start", e.Message, seconds: 6);
             return;
         }
+        _micProblem = false;
+        _micToastShown = false;
+        _warnedSilentMic = false;
         Live = _recorder.Snapshot();
         StartedAt = DateTimeOffset.Now;
         _warnedSilentSystem = false;
@@ -262,6 +318,7 @@ internal sealed class Notetaker : IDisposable
     public void Dispose()
     {
         Abort();
+        _microphone.HealthChanged -= _onMicHealth;
         _tick.Dispose();
     }
 }

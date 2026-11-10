@@ -2,6 +2,7 @@ using System.Diagnostics;
 using VoiceFlow.Core;
 using VoiceFlow.Core.AI;
 using VoiceFlow.Core.Audio;
+using VoiceFlow.Core.Diagnostics;
 using VoiceFlow.Core.Input;
 using VoiceFlow.Core.Library;
 using VoiceFlow.Core.Speech;
@@ -27,8 +28,14 @@ internal sealed class DictationController : IDisposable
     readonly System.Windows.Forms.Timer _levelTimer = new() { Interval = 33 };
     readonly System.Windows.Forms.Timer _segmentTimer = new() { Interval = 1000 };
 
-    AudioCapture? _recorder;
+    readonly SharedMicrophone _microphone;
+    readonly DeliveryLog _deliveries;
+    readonly SynchronizationContext? _ui;
+
+    MicSubscription? _recorder;
     bool _recording;
+    /// <summary>The microphone failed during this session, so missing audio is its fault and not silence.</summary>
+    bool _micFailed;
     SegmentCutter _cutter = new();
     List<Task<string>> _segments = [];
     DateTime _startedAt;
@@ -55,12 +62,16 @@ internal sealed class DictationController : IDisposable
     /// <summary>The last window the user worked in outside VoiceFlow (for Paste last from the tray).</summary>
     public Func<IntPtr> LastExternalWindow { get; set; } = () => IntPtr.Zero;
 
-    public DictationController(AppModel model, FlowBarController bar, TextInserter inserter, OutputMuter muter)
+    /// <param name="microphone">The shared capture. Null uses the app's one (tests and the self-test pass their own).</param>
+    public DictationController(AppModel model, FlowBarController bar, TextInserter inserter, OutputMuter muter, SharedMicrophone? microphone = null)
     {
         _model = model;
         _bar = bar;
         _inserter = inserter;
         _muter = muter;
+        _microphone = microphone ?? MicrophoneHub.Shared;
+        _deliveries = AppDiagnostics.LogFor(model);
+        _ui = SynchronizationContext.Current;
         _levelTimer.Tick += (_, _) => TickLevel();
         _segmentTimer.Tick += (_, _) => TickSegments();
     }
@@ -88,24 +99,26 @@ internal sealed class DictationController : IDisposable
         _context = FocusInfo.Capture();
         if (_context.IsExcluded)
         {
+            Note(DeliveryReason.Blocked, DeliveryDetail.ExcludedApp, kind: kind);
             Fail("VoiceFlow doesn't listen in password managers.");
             return;
         }
-        var recorder = new AudioCapture(prefs.InputDeviceId.Length == 0 ? null : prefs.InputDeviceId);
+        MicSubscription recorder;
         try
         {
-            recorder.Start();
+            recorder = _microphone.Subscribe("dictation", prefs.InputDeviceId.Length == 0 ? null : prefs.InputDeviceId);
         }
-        catch (AudioCaptureException e)
+        catch (Exception e) when (e is AudioCaptureException or InvalidOperationException)
         {
-            recorder.Dispose();
+            Note(DeliveryReason.MicFailed, DeliveryDetail.StartFailed, kind: kind);
             var privacy = e.Message.StartsWith("Microphone access is off", StringComparison.Ordinal);
             Fail(e.Message, privacy ? new ToastAction("Open privacy settings", () => OpenUri("ms-settings:privacy-microphone")) : null);
             return;
         }
-        recorder.Stopped += OnRecorderStopped;
+        recorder.Failed += OnRecorderFailed;
         _recorder = recorder;
         _recording = true;
+        _micFailed = false;
         _session++;
         _kind = kind;
         _warnedLong = false;
@@ -137,6 +150,7 @@ internal sealed class DictationController : IDisposable
                 StopCapture();
                 ResetHotkeySession(false);
                 _bar.Show("VoiceFlow doesn't listen in password fields", seconds: 3);
+                Note(DeliveryReason.Blocked, DeliveryDetail.PasswordField, kind: kind);
             }
         }, TaskScheduler.FromCurrentSynchronizationContext());
 
@@ -161,29 +175,45 @@ internal sealed class DictationController : IDisposable
     public void Cancel()
     {
         if (!_recording) return;
+        var seconds = (DateTime.UtcNow - _startedAt).TotalSeconds;
         StopCapture();
         _segments = [];
         _bar.Set(BarPhase.Idle);
+        Note(DeliveryReason.Cancelled, audioSeconds: seconds);
         Logger.Info("Session cancelled");
     }
 
     public void Finish()
     {
         if (!_recording) return;
+        var held = (DateTime.UtcNow - _startedAt).TotalSeconds;
+        var micFailed = _micFailed;
         var samples = StopCapture();
         var audioSeconds = samples.Length / AudioMath.SampleRate;
         var voiced = AudioMath.VoicedSeconds(samples);
-        if (audioSeconds < 0.5)
-        {
-            // Too short to be speech: drop it quietly.
-            _segments = [];
-            _bar.Set(BarPhase.Idle);
-            return;
-        }
-        if (AudioMath.IsSilent(samples))
+        var verdict = AudioMath.Verdict(samples, held);
+        // A device that failed mid-session explains missing audio, however short or quiet the result is.
+        if (micFailed && verdict is CaptureVerdict.TooShort or CaptureVerdict.NoSpeech) verdict = CaptureVerdict.NoAudio;
+        if (verdict != CaptureVerdict.Speech)
         {
             _segments = [];
-            _bar.Show("No speech heard", audioSeconds > 1 ? "Check your microphone in Settings." : "", seconds: 1.5);
+            switch (verdict)
+            {
+                case CaptureVerdict.TooShort:
+                    // Too short to be speech: drop it quietly.
+                    _bar.Set(BarPhase.Idle);
+                    Note(DeliveryReason.TooShort, audioSeconds: audioSeconds);
+                    break;
+                case CaptureVerdict.NoAudio or CaptureVerdict.DigitalSilence:
+                    Sounds.Error(_model.Preferences.PlaySounds);
+                    _bar.Show("Your microphone sent no audio", "Check the input in Settings.", new ToastAction("Open Settings", OpenSettings), 6);
+                    Note(DeliveryReason.MicFailed, micFailed ? DeliveryDetail.DeviceLost : verdict == CaptureVerdict.DigitalSilence ? DeliveryDetail.DeadSignal : DeliveryDetail.Stalled, audioSeconds);
+                    break;
+                default:
+                    _bar.Show("No speech heard", audioSeconds > 1 ? "Check your microphone in Settings." : "", seconds: 1.5);
+                    Note(DeliveryReason.NoSpeech, DeliveryDetail.Silent, audioSeconds);
+                    break;
+            }
             return;
         }
         var kind = _kind;
@@ -208,6 +238,7 @@ internal sealed class DictationController : IDisposable
             {
                 _segments = [];
                 _bar.Show("VoiceFlow doesn't type into password fields", seconds: 3);
+                Note(DeliveryReason.Blocked, DeliveryDetail.PasswordField, audioSeconds, kind: kind);
                 return;
             }
             if (finalRange is { } r) StartSegment(samples[r]);
@@ -218,11 +249,11 @@ internal sealed class DictationController : IDisposable
             var transcript = SegmentCutter.Join(parts);
             if (HallucinationFilter.IsLikelyHallucination(transcript, voiced))
             {
+                Note(DeliveryReason.NoSpeech, DeliveryDetail.Hallucination, audioSeconds, kind: kind);
                 _bar.Show("No speech heard", seconds: 1.5);
                 return;
             }
             Logger.Info($"Transcribed {audioSeconds:0.0} s of audio into {TextUtil.WhitespaceWords(transcript).Length} words in {began.ElapsedMilliseconds} ms");
-            Logger.Debug($"Transcript: {transcript}");
             if (kind == SessionKind.Dictation) await DeliverDictationAsync(transcript, context, audioSeconds, began);
             else await RunCommandAsync(transcript, context, audioSeconds, began);
         }
@@ -232,13 +263,15 @@ internal sealed class DictationController : IDisposable
             Sounds.Error(_model.Preferences.PlaySounds);
             _bar.Show("Transcription failed", e.Message, e.IsBadKey || e.Kind == ProviderErrorKind.MissingKey ? new ToastAction("Open Settings", OpenSettings) : null, 6);
             _model.Record(new HistoryEntry(kind == SessionKind.Command ? HistoryKind.Command : HistoryKind.Dictation, context.AppName, "", "",
-                                           audioSeconds, 0, "failed"));
+                                           audioSeconds, 0, "failed") { Reason = DeliveryReason.TranscriptionFailed });
+            Note(DeliveryReason.TranscriptionFailed, DeliveryDetail.Provider, audioSeconds, (int)began.ElapsedMilliseconds, kind);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             Logger.Error("Dictation failed", e);
             Sounds.Error(_model.Preferences.PlaySounds);
             _bar.Show("Something went wrong", e.Message, seconds: 6);
+            Note(DeliveryReason.TranscriptionFailed, DeliveryDetail.Unexpected, audioSeconds, (int)began.ElapsedMilliseconds, kind);
         }
         finally
         {
@@ -284,46 +317,72 @@ internal sealed class DictationController : IDisposable
         }
 
         LastResult = final;
-        var result = await _inserter.InsertAsync(final, context);
+        var result = await _inserter.DeliverAsync(final, context);
         var latency = (int)began.ElapsedMilliseconds;
         if (note != null) Logger.Info($"Cleanup skipped: {note}");
+        Note(result.Reason, result.Detail, audioSeconds, latency);
         if (!ReportInsert(result, final, context)) return;
         var entry = new HistoryEntry(HistoryKind.Dictation, context.AppName, transcript, final, audioSeconds, latency,
-                                     result == InsertResult.Pasted ? "pasted" : "copied")
+                                     result.Result is InsertResult.Pasted or InsertResult.PastedUnverified or InsertResult.PasteNotLanded ? "pasted" : "copied")
         {
+            Reason = result.Reason,
             Usage = usage,
             WordsCorrected = HistoryEntry.WordsChanged(transcript, final),
             DictionaryFixes = dictionaryFixes,
         };
         _model.Record(entry);
-        Logger.Info($"Dictation delivered in {latency} ms via {result}");
+        Logger.Info($"Dictation delivered in {latency} ms via {result.Reason.WireName()}");
+    }
+
+    /// <summary>Records how a session ended. Codes and numbers only.</summary>
+    void Note(DeliveryReason reason, string? detail = null, double audioSeconds = 0, int latencyMs = 0, SessionKind? kind = null, DeliverySession? session = null)
+    {
+        var which = session ?? ((kind ?? _kind) == SessionKind.Command ? DeliverySession.Command : DeliverySession.Dictation);
+        _deliveries.Record(new DeliveryLogEntry(which, reason, detail, (int)(audioSeconds * 1000), latencyMs));
     }
 
     /// <summary>Tells the user how an insertion ended. Returns false when nothing should be recorded.</summary>
-    bool ReportInsert(InsertResult result, string text, TypingContext context)
+    bool ReportInsert(InsertOutcome outcome, string text, TypingContext context)
     {
         var preview = TextUtil.Prefix(text, 140);
-        switch (result)
+        switch (outcome.Result)
         {
             case InsertResult.Pasted:
                 _bar.Set(BarPhase.Idle);
                 return true;
+            case InsertResult.PastedUnverified:
+                // Apps that can't be read back still got the paste; the bar stays out of the way.
+                _bar.Set(BarPhase.Idle);
+                return true;
+            case InsertResult.PasteNotLanded:
+                OfferPaste("Didn't reach that field", preview, 6);
+                return true;
             case InsertResult.FocusChanged:
-                _bar.Show("You switched windows, so it was copied instead", preview, seconds: 5);
+                OfferPaste("You switched apps, so it was copied instead", preview, 5);
+                return true;
+            case InsertResult.CopiedOnly when outcome.Detail == DeliveryDetail.Elevated:
+                // A Paste button can't work here: Windows drops synthetic keys sent to an administrator window.
+                _bar.Show("This app runs as administrator. Copied instead; press Ctrl+V.", preview, seconds: 6);
+                return true;
+            case InsertResult.CopiedOnly when outcome.Detail == DeliveryDetail.AppNotResponding:
+                _bar.Show("The app isn't responding. Copied to the clipboard.", preview, seconds: 6);
                 return true;
             case InsertResult.CopiedOnly:
-                _bar.Show(context.Elevated ? "This app runs as administrator. Copied instead; press Ctrl+V."
-                                           : "The app isn't responding. Copied to the clipboard.", preview, seconds: 6);
+                OfferPaste("No text field. Copied to clipboard", preview, 5);
                 return true;
             case InsertResult.Blocked:
                 _bar.Show("Not typed: password field or password manager", seconds: 3);
                 return false;
             default:
                 Sounds.Error(_model.Preferences.PlaySounds);
-                _bar.Show("Couldn't paste: the clipboard is busy", "Use Paste last transcript from the tray menu.", seconds: 6);
+                _bar.Show(outcome.Detail == DeliveryDetail.InputRefused ? "Windows refused the paste keys" : "Couldn't paste: the clipboard is busy",
+                          "Use Paste last transcript from the tray menu.", seconds: 6);
                 return true;
         }
     }
+
+    /// <summary>One click to type the text into whatever has focus now, with every protection still applied.</summary>
+    void OfferPaste(string message, string preview, double seconds) => _bar.Show(message, preview, new ToastAction("Paste", PasteLast), seconds);
 
     async Task RunCommandAsync(string instruction, TypingContext context, double audioSeconds, Stopwatch began)
     {
@@ -335,6 +394,7 @@ internal sealed class DictationController : IDisposable
         if (context.IsExcluded || await FocusInfo.FocusedFieldStateAsync(context.Window) == FieldState.Password)
         {
             _bar.Show("VoiceFlow doesn't type into password fields", seconds: 3);
+            Note(DeliveryReason.Blocked, context.IsExcluded ? DeliveryDetail.ExcludedApp : DeliveryDetail.PasswordField, audioSeconds, kind: SessionKind.Command);
             return;
         }
         // Terminal scrollback is untrusted (anyone's output), so it is never sent.
@@ -346,11 +406,12 @@ internal sealed class DictationController : IDisposable
             var result = await runner.RunAsync(context.AppName, fullText, selected, instruction);
             var latency = (int)began.ElapsedMilliseconds;
             var outcome = "inserted";
+            InsertOutcome? delivered = null;
             switch (result.Action)
             {
                 case CommandAction.Replace:
-                    if (selected.Length > 0) outcome = CommandInserted(await _inserter.InsertAsync(result.Text, context), result.Text, context);
-                    else if (fullText.Length > 0) outcome = CommandInserted(await _inserter.ReplaceAllAsync(result.Text, context), result.Text, context);
+                    if (selected.Length > 0) delivered = await _inserter.DeliverAsync(result.Text, context);
+                    else if (fullText.Length > 0) delivered = await _inserter.DeliverAsync(result.Text, context, replaceAll: true);
                     else
                     {
                         _bar.Show("Select some text first", "Command Mode edits the selected text or the current field.", seconds: 4);
@@ -358,7 +419,7 @@ internal sealed class DictationController : IDisposable
                     }
                     break;
                 case CommandAction.Insert:
-                    outcome = CommandInserted(await _inserter.InsertAsync(result.Text, context), result.Text, context);
+                    delivered = await _inserter.DeliverAsync(result.Text, context);
                     break;
                 case CommandAction.Search:
                     OpenUri(CommandPrompt.SearchUrl(result.Text).AbsoluteUri);
@@ -371,25 +432,39 @@ internal sealed class DictationController : IDisposable
                     outcome = "answer";
                     break;
             }
+            if (delivered is { } ended)
+            {
+                outcome = CommandInserted(ended, result.Text, context);
+                Note(ended.Reason, ended.Detail, audioSeconds, latency, SessionKind.Command);
+            }
             LastResult = result.Text;
-            _model.Record(new HistoryEntry(HistoryKind.Command, context.AppName, instruction, result.Text, audioSeconds, latency, outcome));
+            _model.Record(new HistoryEntry(HistoryKind.Command, context.AppName, instruction, result.Text, audioSeconds, latency, outcome)
+            {
+                Reason = delivered?.Reason ?? DeliveryReason.Unknown,
+            });
         }
         catch (ProviderException e)
         {
             Sounds.Error(_model.Preferences.PlaySounds);
             _bar.Show("Command failed", e.Message, seconds: 6);
+            Note(DeliveryReason.TranscriptionFailed, DeliveryDetail.CommandModel, audioSeconds, (int)began.ElapsedMilliseconds, SessionKind.Command);
         }
     }
 
     /// <summary>Reports a Command Mode insertion and returns the history outcome.</summary>
-    string CommandInserted(InsertResult result, string text, TypingContext context)
+    string CommandInserted(InsertOutcome outcome, string text, TypingContext context)
     {
-        if (result == InsertResult.Pasted)
+        if (outcome.Result == InsertResult.Pasted)
         {
             _bar.Show("Done", action: new ToastAction("Undo", () => _ = UndoAsync(context.Window)), seconds: 6);
             return "inserted";
         }
-        return ReportInsert(result, text, context) ? "copied" : "failed";
+        if (outcome.Result == InsertResult.PastedUnverified)
+        {
+            _bar.Show("Done", action: new ToastAction("Undo", () => _ = UndoAsync(context.Window)), seconds: 6);
+            return "pasted";
+        }
+        return ReportInsert(outcome, text, context) ? "copied" : "failed";
     }
 
     static async Task UndoAsync(IntPtr window)
@@ -422,6 +497,7 @@ internal sealed class DictationController : IDisposable
             {
                 await _inserter.CopyAsync(text);
                 _bar.Show("Copied last transcript", "Click where it should go and press Ctrl+V.", seconds: 3);
+                Note(DeliveryReason.CopiedNoField, DeliveryDetail.NoWindow, session: DeliverySession.PasteLast);
                 return;
             }
         }
@@ -429,9 +505,12 @@ internal sealed class DictationController : IDisposable
         if (context.IsExcluded)
         {
             _bar.Show("VoiceFlow doesn't type into password managers", seconds: 3);
+            Note(DeliveryReason.Blocked, DeliveryDetail.ExcludedApp, session: DeliverySession.PasteLast);
             return;
         }
-        ReportInsert(await _inserter.InsertAsync(text, context), text, context);
+        var outcome = await _inserter.DeliverAsync(text, context);
+        Note(outcome.Reason, outcome.Detail, session: DeliverySession.PasteLast);
+        ReportInsert(outcome, text, context);
     }
 
     public async void CopyLast()
@@ -467,21 +546,27 @@ internal sealed class DictationController : IDisposable
         float[] samples = [];
         if (recorder != null)
         {
-            recorder.Stopped -= OnRecorderStopped;
+            recorder.Failed -= OnRecorderFailed;
             samples = recorder.Stop();
-            recorder.Dispose();
         }
         _muter.Restore();
         return samples;
     }
 
-    void OnRecorderStopped(Exception? error)
+    /// <summary>The shared microphone gave up restarting. Raised off the UI thread.</summary>
+    void OnRecorderFailed()
     {
-        if (!_recording) return;
-        // The microphone went away mid-sentence: keep what was said.
-        _bar.Show("The microphone stopped", error?.Message ?? "It was unplugged or taken by another app.", seconds: 5);
-        Finish();
-        ResetHotkeySession(false);
+        void Handle()
+        {
+            if (!_recording) return;
+            // The microphone went away mid-sentence: keep what was said.
+            _micFailed = true;
+            _bar.Show("The microphone stopped", "It was unplugged or taken by another app.", seconds: 5);
+            Finish();
+            ResetHotkeySession(false);
+        }
+        if (_ui != null) _ui.Post(_ => Handle(), null);
+        else Handle();
     }
 
     void TickLevel()

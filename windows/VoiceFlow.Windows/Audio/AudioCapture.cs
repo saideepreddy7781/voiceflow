@@ -114,26 +114,25 @@ internal sealed class AudioCapture : IDisposable
             IsRecording = true;
             Logger.Info($"{(_loopback ? "Loopback" : "Microphone")} capture started ({format.SampleRate} Hz, {format.Channels} ch, {_bits}-bit{(_isFloat ? " float" : "")})");
         }
-        catch (AudioCaptureException)
-        {
-            Cleanup();
-            throw;
-        }
-        // NAudio raises HRESULTs through Marshal.ThrowExceptionForHR, which turns E_ACCESSDENIED (the microphone
-        // privacy switch) into UnauthorizedAccessException, not COMException.
-        catch (Exception e) when (!_loopback && (e is UnauthorizedAccessException || (uint)e.HResult == 0x80070005))
-        {
-            Cleanup();
-            throw new AudioCaptureException(
-                "Microphone access is off. Turn on Settings → Privacy & security → Microphone → Let desktop apps access your microphone.", e);
-        }
-        // Other HRESULTs map to many exception types (COMException, ArgumentException, NotImplementedException,
-        // TimeoutException…); any of them means the device could not start.
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             Cleanup();
-            throw new AudioCaptureException($"The {(_loopback ? "speaker audio" : "microphone")} could not start: {e.Message}", e);
+            throw Translate(e, _loopback);
         }
+    }
+
+    /// <summary>Turns a start failure into the message the user sees.</summary>
+    internal static AudioCaptureException Translate(Exception e, bool loopback)
+    {
+        if (e is AudioCaptureException known) return known;
+        // NAudio raises HRESULTs through Marshal.ThrowExceptionForHR, which turns E_ACCESSDENIED (the microphone
+        // privacy switch) into UnauthorizedAccessException, not COMException.
+        if (!loopback && (e is UnauthorizedAccessException || (uint)e.HResult == 0x80070005))
+            return new AudioCaptureException(
+                "Microphone access is off. Turn on Settings → Privacy & security → Microphone → Let desktop apps access your microphone.", e);
+        // Other HRESULTs map to many exception types (COMException, ArgumentException, NotImplementedException,
+        // TimeoutException…); any of them means the device could not start.
+        return new AudioCaptureException($"The {(loopback ? "speaker audio" : "microphone")} could not start: {e.Message}", e);
     }
 
     void OnData(object? sender, WaveInEventArgs e)
