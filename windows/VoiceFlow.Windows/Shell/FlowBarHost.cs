@@ -19,6 +19,8 @@ internal sealed class FlowBarHost : IDisposable
     readonly FlowBarWindow _window;
     readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromMilliseconds(33) };
     readonly IntPtr _handle;
+    readonly LowLevelKeyboardProc _focusGuard;   // kept in a field so the GC never collects the callback
+    readonly IntPtr _focusHook;
     bool _clickThrough = true;
 
     public FlowBarHost(FlowBarController bar, FlowBarViewModel viewModel)
@@ -26,12 +28,17 @@ internal sealed class FlowBarHost : IDisposable
         _bar = bar;
         _window = new FlowBarWindow { DataContext = viewModel };
         _handle = _window.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+        // Avalonia calls SetFocus on every mouse press, and SetFocus activates a window even with WS_EX_NOACTIVATE.
+        // Refusing it here keeps the keyboard focus in the app being typed in.
+        _focusGuard = OnFocusRequest;
+        _focusHook = SetWindowsHookExW(WH_CBT, _focusGuard, IntPtr.Zero, GetCurrentThreadId());
+        if (_focusHook == IntPtr.Zero) Logger.Warn($"Could not guard the Flow bar's focus (error {Marshal.GetLastWin32Error()})");
         ApplyStyles();
         _tick.Tick += (_, _) => OnTick();
         _window.SizeChanged += (_, _) => Place();
         _window.ScalingChanged += (_, _) => Place();
-        // Kept in Avalonia's style callback too, so its own style updates cannot drop these flags.
-        Win32Properties.AddWindowStylesCallback(_window, (style, exStyle) => (style, exStyle | (uint)(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)));
+        // Avalonia rebuilds the extended style from nothing whenever it shows the window, so these flags live in its callback too.
+        Win32Properties.AddWindowStylesCallback(_window, (style, exStyle) => (style, exStyle | ExtendedStyles));
         // Clicking the bar must leave the keyboard focus in the app the user is typing in.
         Win32Properties.AddWndProcHookCallback(_window, HookWndProc);
         bar.Changed += OnChanged;
@@ -49,13 +56,19 @@ internal sealed class FlowBarHost : IDisposable
         return new IntPtr(MA_NOACTIVATE);
     }
 
+    IntPtr OnFocusRequest(int code, IntPtr wParam, IntPtr lParam)
+    {
+        if ((code == HCBT_SETFOCUS || code == HCBT_ACTIVATE) && wParam == _handle) return new IntPtr(1);
+        return CallNextHookEx(_focusHook, code, wParam, lParam);
+    }
+
+    uint ExtendedStyles => (uint)(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED | (_clickThrough ? WS_EX_TRANSPARENT : 0));
+
     void ApplyStyles()
     {
         if (_handle == IntPtr.Zero) return;
-        var style = GetWindowLongPtrW(_handle, GWL_EXSTYLE).ToInt64();
-        style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED;
-        if (_clickThrough) style |= WS_EX_TRANSPARENT; else style &= ~(long)WS_EX_TRANSPARENT;
-        SetWindowLongPtrW(_handle, GWL_EXSTYLE, new IntPtr(style));
+        var style = GetWindowLongPtrW(_handle, GWL_EXSTYLE).ToInt64() & ~(long)WS_EX_TRANSPARENT;
+        SetWindowLongPtrW(_handle, GWL_EXSTYLE, new IntPtr(style | ExtendedStyles));
         // A layered window draws nothing until this has been called once; 255 leaves per-pixel alpha alone.
         SetLayeredWindowAttributes(_handle, 0, 255, LWA_ALPHA);
     }
@@ -77,6 +90,8 @@ internal sealed class FlowBarHost : IDisposable
         {
             _tick.Stop();
             _window.Hide();
+            _clickThrough = true;   // a click on a button may have hidden the bar with the pointer still over it
+            ApplyStyles();
         }
     }
 
@@ -118,6 +133,7 @@ internal sealed class FlowBarHost : IDisposable
     {
         _bar.Changed -= OnChanged;
         _tick.Stop();
+        if (_focusHook != IntPtr.Zero) UnhookWindowsHookEx(_focusHook);
         _window.Close();
     }
 }

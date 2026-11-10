@@ -85,6 +85,7 @@ public sealed partial class ShellViewModel : ObservableObject
             if (other != item) other.IsSelected = false;
         _selecting = false;
         if (item.Page == Page.Settings) Settings.General.RefreshDevices();
+        else if (_services.Microphone.IsTesting) _services.Microphone.StopTest();
         Current = Page_(item.Page);
     }
 

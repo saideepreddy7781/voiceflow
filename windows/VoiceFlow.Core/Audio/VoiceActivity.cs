@@ -52,6 +52,22 @@ public sealed record TimeMap(IReadOnlyList<TimeMapSpan> Spans)
         if (Spans.Count == 0) return chunkSeconds;
         var first = Spans[0];
         if (chunkSeconds <= first.ChunkStart) return first.MeetingStart;
+        for (int i = Spans.Count - 1; i >= 0; i--)
+        {
+            var span = Spans[i];
+            if (chunkSeconds < span.ChunkStart) continue;
+            if (chunkSeconds > span.ChunkStart + span.Seconds && i + 1 < Spans.Count) return Spans[i + 1].MeetingStart;
+            return span.MeetingStart + Math.Min(chunkSeconds - span.ChunkStart, span.Seconds);
+        }
+        return first.MeetingStart;
+    }
+
+    /// <summary>Meeting time for the end of a line. A position inside a splice is the end of the speech before it.</summary>
+    public double MeetingEndTime(double chunkSeconds)
+    {
+        if (Spans.Count == 0) return chunkSeconds;
+        var first = Spans[0];
+        if (chunkSeconds <= first.ChunkStart) return first.MeetingStart;
         foreach (var span in Spans.Reverse())
             if (chunkSeconds >= span.ChunkStart) return span.MeetingStart + Math.Min(chunkSeconds - span.ChunkStart, span.Seconds);
         return first.MeetingStart;

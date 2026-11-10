@@ -32,6 +32,19 @@ public static class LanguageEvidence
         return common - 0.5 * vowelEnd;
     }
 
+    /// <summary>
+    /// Share of words ending in a, i, o or u above which Latin-letter text can be Indian-language speech spelled by
+    /// sound. Technical English fails <see cref="EnglishScore"/> on its vocabulary alone and sits well below this.
+    /// </summary>
+    public const double SoundSpelledVowelShare = 0.2;
+
+    /// <summary>Whether Latin-letter text ends enough words in vowels to be Telugu or Hindi spelled by sound.</summary>
+    public static bool LooksSoundSpelled(string text)
+    {
+        var words = LatinWords(text);
+        return words.Count > 0 && (double)words.Count(w => "aiou".Contains(w[^1])) / words.Count >= SoundSpelledVowelShare;
+    }
+
     /// <summary>Null when the text is too short to tell or isn't mostly Latin letters.</summary>
     public static bool? ReadsAsEnglish(string text)
     {

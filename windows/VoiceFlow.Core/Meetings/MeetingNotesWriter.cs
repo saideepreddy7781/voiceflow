@@ -151,6 +151,9 @@ public sealed class MeetingNotesWriter(GroqChat chat, string model, Func<TimeSpa
         return output;
     }
 
+    /// <summary>Longer rate limits than this are reported at once, and Try again works when the limit has passed.</summary>
+    internal const double MaxRateLimitWait = 120;
+
     async Task<MeetingNotes> AskAsync(string user, CancellationToken cancel)
     {
         try
@@ -173,7 +176,7 @@ public sealed class MeetingNotesWriter(GroqChat chat, string model, Func<TimeSpa
                 var json = await chat.CompleteAsync(useModel, System, user, maxTokens: 1_500, json: true, timeoutSeconds: 60, priority: GroqPriority.Background, cancel: cancel);
                 return Parse(json) ?? throw ProviderException.BadResponse();
             }
-            catch (ProviderException e) when (e.Kind == ProviderErrorKind.RateLimited && attempt < 8)
+            catch (ProviderException e) when (e.Kind == ProviderErrorKind.RateLimited && attempt < 8 && (e.RetryAfter ?? 0) <= MaxRateLimitWait)
             {
                 // Long meetings hit the per-minute token limit; wait it out.
                 attempt++;

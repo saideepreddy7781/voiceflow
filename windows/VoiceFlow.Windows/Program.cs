@@ -97,6 +97,7 @@ internal static class Program
     }
 
     static int _reporting;
+    static long _lastReported;
 
     /// <summary>An exception on the UI thread: log it and tell the user once, without crashing the app.</summary>
     static void OnUiException(Exception e)
@@ -106,6 +107,10 @@ internal static class Program
         try
         {
             WindowsApp.Current?.EmergencyCleanup();
+            // A timer that keeps failing must not put up a message box every time it ticks.
+            var now = Environment.TickCount64;
+            if (_lastReported != 0 && now - _lastReported < 60_000) return;
+            _lastReported = now;
             NativeMethods.MessageBoxW(IntPtr.Zero, $"Something went wrong, but VoiceFlow is still running.\n\n{e.Message}\n\nDetails are in {Logger.FilePath}", "VoiceFlow", NativeMethods.MB_ICONWARNING);
         }
         finally

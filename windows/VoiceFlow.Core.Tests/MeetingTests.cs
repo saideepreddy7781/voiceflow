@@ -22,6 +22,31 @@ public class MeetingTests
     }
 
     [Fact]
+    public void APositionInsideASpliceStartsAtTheNextSpan()
+    {
+        var map = new TimeMap([new(0, 60, 2), new(2.25, 90, 2)]);
+        Assert.Equal(90, map.MeetingTime(2.1), 3);
+        Assert.Equal(62, map.MeetingEndTime(2.1), 3);
+        Assert.Equal(61.5, map.MeetingTime(1.5), 3);
+    }
+
+    [Fact]
+    public void AReplyRepeatingTheQuestionStays()
+    {
+        var question = new TranscriptLine(10, Speaker.Others, "Can you send me the report by Friday?", End: 13);
+        var reply = new TranscriptLine(13.5, Speaker.You, "Yes, I can send you the report by Friday", End: 16);
+        Assert.Equal(2, TranscriptMerge.Merge([question], [reply]).Count);
+    }
+
+    [Fact]
+    public void ACallEchoIsStillRemovedWhenLinesHaveEndTimes()
+    {
+        var call = new TranscriptLine(10, Speaker.Others, "the payment service is ready for the next release", End: 14);
+        var echo = new TranscriptLine(10.4, Speaker.You, "payment service is ready for the next release", End: 14.2);
+        Assert.Equal([Speaker.Others], TranscriptMerge.Merge([call], [echo]).Select(l => l.Speaker));
+    }
+
+    [Fact]
     public void MarkdownAndSafeFileName()
     {
         var m = new Meeting("Launch / review: Q4?", DateTimeOffset.FromUnixTimeSeconds(1_800_000_000), "Zoom");
@@ -266,6 +291,66 @@ public class MeetingRecorderTests
         var first = await Task.WhenAny(uploads.Task, Task.Delay(5_000));
         Assert.Same(uploads.Task, first);
         await recorder.StopAsync();
+    }
+
+    [Fact]
+    public async Task StickyLanguageLetsGoWhenTheStreamMovesToEnglish()
+    {
+        var mic = new FakeSource();
+        var hints = new List<string?>();
+        int count = 0;
+        var settings = new MeetingRecorder.Settings("test", "m", ["en", "te"], new WhisperPrompts(), null, false);
+        var recorder = new MeetingRecorder(_ => mic, () => null, (_, request, _) =>
+        {
+            lock (hints) hints.Add(request.Hint);
+            var n = Interlocked.Increment(ref count);
+            // The third chunk is English: the sticky Telugu request loses to auto-detect.
+            return Task.FromResult(new DetailedTranscript($"chunk {n}", n == 3 ? "en" : "te", []));
+        }, NoWait);
+        recorder.Start("T", "", [], settings);
+        for (int i = 0; i < 4; i++)
+        {
+            mic.Push(Cat(Speech(22), Silence(3)));
+            recorder.Tick();
+            await Task.Delay(150);
+        }
+        await recorder.StopAsync();
+        Assert.Equal([null, null, "te", null], hints);
+    }
+
+    [Fact]
+    public async Task StopHonoursTheRetryDeadlineDuringARateLimit()
+    {
+        var mic = new FakeSource();
+        int count = 0;
+        var waits = new List<double>();
+        var recorder = new MeetingRecorder(_ => mic, () => null, (_, _, _) =>
+        {
+            // Two live tries fail fast; the retry at Stop then hits a long rate limit.
+            if (Interlocked.Increment(ref count) <= 2) throw ProviderException.Network("offline");
+            throw ProviderException.RateLimited(100);
+        }, t => { lock (waits) waits.Add(t.TotalSeconds); return Task.CompletedTask; }) { FinalRetryLimit = 0.2 };
+        recorder.Start("T", "", [], Settings);
+        mic.Push(Speech(5));
+        var meeting = await recorder.StopAsync();
+        Assert.All(waits, w => Assert.True(w <= 2.01, $"waited {w} s"));
+        Assert.Equal(TranscriptFilter.LostMarker, meeting!.Lines[0].Text);
+    }
+
+    [Fact]
+    public async Task NotesAndScriptRewritingDoNotSleepThroughALongRateLimit()
+    {
+        var gate = new GroqGate();
+        try { await gate.PerformAsync(GroqCost.Chat("m", 1), GroqPriority.Background, () => throw ProviderException.RateLimited(5_000)); }
+        catch (ProviderException) { }
+        var chat = new GroqChat("k", gate: gate);
+        Task Forbidden(TimeSpan t) => throw new InvalidOperationException($"slept {t}");
+        var meeting = new Meeting("T") { Lines = [new TranscriptLine(0, Speaker.You, "hello there")] };
+        await Assert.ThrowsAsync<ProviderException>(() =>
+            new MeetingNotesWriter(chat, "m", Forbidden, fallbackModel: null).WriteAsync(meeting, default, TeluguScript.Mixed, HindiScript.Mixed));
+        var result = await new TranscriptScriptWriter(chat, "m", Forbidden)
+            .RewriteAsync([new TranscriptLine(0, Speaker.You, "నేను office")], TeluguScript.Telugu, null);
+        Assert.NotNull(result.Note);
     }
 
     [Fact]

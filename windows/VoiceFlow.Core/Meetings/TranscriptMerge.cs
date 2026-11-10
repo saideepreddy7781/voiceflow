@@ -26,11 +26,11 @@ public static class ChunkLines
             {
                 foreach (var group in groups.Where(g => g.Count > 0))
                     output.Add(new TranscriptLine(map.MeetingTime(group[0].Start), speaker, string.Join(" ", group.Select(w => w.Word)),
-                                                  map.MeetingTime(group[^1].End), language));
+                                                  map.MeetingEndTime(group[^1].End), language));
             }
             else
             {
-                output.Add(new TranscriptLine(map.MeetingTime(segment.Start), speaker, segment.Text, map.MeetingTime(segment.End), language));
+                output.Add(new TranscriptLine(map.MeetingTime(segment.Start), speaker, segment.Text, map.MeetingEndTime(segment.End), language));
             }
         }
         return output;
@@ -84,15 +84,24 @@ public static class TranscriptMerge
             if (words.Count < MinimumEchoWords) return true;
             var longLine = words.Count >= LongLineWords;
             var window = longLine ? EchoWindow : ShortEchoWindow;
-            var pool = others.Where(o => Math.Abs(o.Time - line.Time) <= window || Overlaps(o, line)).SelectMany(o => Tokens(o.Text)).ToHashSet();
+            var pool = others.Where(o => HeardTogether(o, line, window)).SelectMany(o => Tokens(o.Text)).ToHashSet();
             if (pool.Count == 0) return true;
             var share = (double)words.Count(pool.Contains) / words.Count;
             return share < (longLine ? EchoShare : ShortEchoShare);
         }).ToList();
     }
 
-    static bool Overlaps(TranscriptLine a, TranscriptLine b) =>
-        a.End is { } ae && b.End is { } be && a.Time < be && b.Time < ae;
+    /// <summary>
+    /// An echo is heard while the call's line plays, so most of the shorter line overlaps the other. A reply starts
+    /// after the line it answers has ended, however many of its words it repeats. Lines with no end time (older
+    /// meetings) can only compare start times.
+    /// </summary>
+    static bool HeardTogether(TranscriptLine call, TranscriptLine mic, double window)
+    {
+        if (call.End is not { } callEnd || mic.End is not { } micEnd) return Math.Abs(call.Time - mic.Time) <= window;
+        var overlap = Math.Min(callEnd, micEnd) - Math.Max(call.Time, mic.Time);
+        return overlap > 0 && overlap >= Math.Min(callEnd - call.Time, micEnd - mic.Time) * 0.5;
+    }
 
     internal static List<string> Tokens(string text) =>
         TextUtil.Split(text.ToLowerInvariant(), g => !TextUtil.IsLetter(g) && !TextUtil.IsNumber(g));

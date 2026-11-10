@@ -43,6 +43,17 @@ public class ResolverListTests
     static LanguageOpinion O(string lang, string text, double conf) => new(lang, T(text, lang, conf));
 
     [Fact]
+    public void TechnicalEnglishIsNotTreatedAsDisguisedTelugu()
+    {
+        var plan = new LanguagePlan(["en", "te"]);
+        const string jargon = "Deploy the Kubernetes ingress controller behind nginx with mutual TLS termination";
+        Assert.False(LanguageEvidence.ReadsAsEnglish(jargon));
+        var auto = T(jargon, "en", -0.2);
+        Assert.Empty(LanguageResolver.OpinionLanguages(auto, plan));
+        Assert.Equal("en", LanguageResolver.Choose(auto, [O("te", "డిప్లాయ్ ది కుబెర్నెటిస్ ఇంగ్రెస్ కంట్రోలర్", -0.6)], plan).Language);
+    }
+
+    [Fact]
     public void RealHindiIsNotReplacedByForcedTelugu() =>
         Assert.Equal("hi", LanguageResolver.Choose(T(Hindi, "hi", -0.074), [O("te", "మెకల ఉఫిస ఆంగా", -0.31)], new LanguagePlan(["en", "te"])).Language);
 

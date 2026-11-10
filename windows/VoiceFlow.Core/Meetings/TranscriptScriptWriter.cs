@@ -137,7 +137,7 @@ public sealed class TranscriptScriptWriter(GroqChat chat, string model, Func<Tim
                 return await chat.CompleteAsync(model, CleanupPrompt.MeetingScript, UserMessage(texts, telugu, hindi), maxTokens: 3_000, json: true,
                                                 timeoutSeconds: 60, priority: GroqPriority.Background, cancel: cancel).ConfigureAwait(false);
             }
-            catch (ProviderException e) when (e.Kind == ProviderErrorKind.RateLimited && attempt < 4)
+            catch (ProviderException e) when (e.Kind == ProviderErrorKind.RateLimited && attempt < 4 && (e.RetryAfter ?? 0) <= MeetingNotesWriter.MaxRateLimitWait)
             {
                 attempt++;
                 await _delay(TimeSpan.FromSeconds((e.RetryAfter ?? 8) + 1)).ConfigureAwait(false);
