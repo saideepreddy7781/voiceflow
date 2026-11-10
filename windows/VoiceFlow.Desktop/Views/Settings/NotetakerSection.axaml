@@ -1,0 +1,44 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             xmlns:mt="using:VoiceFlow.Core.Meetings"
+             x:Class="VoiceFlow.Desktop.Views.Settings.NotetakerSection"
+             x:DataType="vm:NotetakerSettings">
+  <StackPanel Spacing="16">
+    <Border Classes="card" Padding="20,4">
+      <StackPanel Classes="rows">
+        <c:SettingRow Title="Record the other people (system audio)" Description="Without it, only your microphone is recorded.">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding SystemAudio}"/>
+        </c:SettingRow>
+        <c:SettingRow Title="Remind me to tell everyone I'm taking notes">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding ConsentReminder}"/>
+        </c:SettingRow>
+        <c:SettingRow Title="Write notes in">
+          <ComboBox ItemsSource="{Binding LanguageChoices}" SelectedItem="{Binding SelectedLanguage}" Width="200">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:Choice"><TextBlock Text="{Binding Label}" FontSize="13"/></DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </c:SettingRow>
+      </StackPanel>
+    </Border>
+    <StackPanel Spacing="8">
+      <TextBlock Text="Sync" Classes="h3"/>
+      <Border Classes="card" Padding="20">
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="Auto,*,Auto,8,Auto">
+            <PathIcon Data="{StaticResource IconFolder}" Width="16" Height="16" Foreground="{DynamicResource FgSubtle}" Margin="0,0,8,0"/>
+            <TextBlock Grid.Column="1" Text="{Binding FolderText}" Classes="callout" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            <Button Grid.Column="2" Content="Choose folder" Command="{Binding ChooseFolderCommand}"/>
+            <Button Grid.Column="4" Content="Stop syncing" Command="{Binding StopSyncingCommand}" IsVisible="{Binding HasFolder}"/>
+          </Grid>
+          <TextBlock Classes="callout muted wrap" Text="Each meeting is saved as a Markdown file. Point this at a folder synced by OneDrive, or at your Obsidian vault."/>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+    <Border Classes="notice">
+      <TextBlock Classes="callout wrap" Text="Recording a call can require everyone's permission where you live. VoiceFlow shows a recording chip the whole time; tell the people on the call."/>
+    </Border>
+  </StackPanel>
+</UserControl>

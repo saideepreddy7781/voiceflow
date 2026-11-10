@@ -1,0 +1,142 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:svc="using:VoiceFlow.Desktop.Services"
+             x:Class="VoiceFlow.Desktop.Views.HomePage"
+             x:DataType="vm:HomeViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="24" MaxWidth="880" Margin="{DynamicResource PagePadding}" HorizontalAlignment="Stretch">
+      <!-- Greeting -->
+      <StackPanel Spacing="8">
+        <TextBlock Text="{Binding Greeting}" Classes="title"/>
+        <WrapPanel Orientation="Horizontal">
+          <TextBlock Text="Hold" Classes="callout muted" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <Border Classes="keycap" VerticalAlignment="Center" Margin="0,0,6,0"><TextBlock Text="{Binding Hotkey}"/></Border>
+          <TextBlock Text="to dictate in any app. Add" Classes="callout muted" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <Border Classes="keycap" VerticalAlignment="Center" Margin="0,0,6,0"><TextBlock Text="Space"/></Border>
+          <TextBlock Text="for hands-free." Classes="callout muted" VerticalAlignment="Center"/>
+        </WrapPanel>
+      </StackPanel>
+
+      <!-- Today's stats -->
+      <Grid ColumnDefinitions="*,16,*,16,*">
+        <Border Classes="card" Grid.Column="0" Padding="20,16">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Words today" Classes="callout muted"/>
+            <TextBlock Text="{Binding WordsToday}" Classes="statSmall"/>
+          </StackPanel>
+        </Border>
+        <Border Classes="card" Grid.Column="2" Padding="20,16">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Dictations today" Classes="callout muted"/>
+            <TextBlock Text="{Binding DictationsToday}" Classes="statSmall"/>
+          </StackPanel>
+        </Border>
+        <Border Classes="card" Grid.Column="4" Padding="20,16">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Typing time saved" Classes="callout muted"/>
+            <TextBlock Text="{Binding TimeSavedToday}" Classes="statSmall"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Setup card -->
+      <Border Classes="card" IsVisible="{Binding ShowSetup}">
+        <Grid ColumnDefinitions="Auto,*,Auto">
+          <Border Width="32" Height="32" CornerRadius="16" Background="{DynamicResource SignalSoft}" VerticalAlignment="Top">
+            <PathIcon Data="{StaticResource IconWarning}" Foreground="{DynamicResource Signal}" Width="16" Height="16"/>
+          </Border>
+          <StackPanel Grid.Column="1" Margin="16,0" Spacing="8">
+            <TextBlock Text="Finish setting up" Classes="h3"/>
+            <ItemsControl ItemsSource="{Binding SetupProblems}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="4"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="svc:SetupProblem">
+                  <TextBlock Classes="callout muted wrap">
+                    <Run Text="{Binding Title}" FontWeight="Medium" Foreground="{DynamicResource Fg}"/>
+                    <Run Text=" "/><Run Text="{Binding Detail}"/>
+                  </TextBlock>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+          <Button Grid.Column="2" Classes="primary" Content="Open setup" Command="{Binding RunSetupCommand}" VerticalAlignment="Top"/>
+        </Grid>
+      </Border>
+
+      <!-- Search -->
+      <TextBox Classes="search" Text="{Binding SearchText}" PlaceholderText="Search your transcripts" AutomationProperties.Name="Search transcripts">
+        <TextBox.InnerLeftContent>
+          <PathIcon Data="{StaticResource IconSearch}" Width="16" Height="16" Foreground="{DynamicResource FgSubtle}" Margin="12,0,0,0"/>
+        </TextBox.InnerLeftContent>
+      </TextBox>
+
+      <!-- History -->
+      <StackPanel Spacing="24">
+        <ItemsControl ItemsSource="{Binding Groups}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel Spacing="24"/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:HistoryGroup">
+              <StackPanel Spacing="8">
+                <TextBlock Text="{Binding Label}" Classes="overline"/>
+                <Border Classes="card list" Padding="0">
+                  <ItemsControl ItemsSource="{Binding Rows}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:HistoryRowViewModel">
+                        <Border Classes="row" BorderBrush="{DynamicResource Hairline}" Padding="20,12">
+                          <Grid ColumnDefinitions="76,*,Auto">
+                            <TextBlock Text="{Binding Time}" Classes="caption subtle" Margin="0,3,0,0" VerticalAlignment="Top"/>
+                            <StackPanel Grid.Column="1" Spacing="4" Margin="0,0,16,0">
+                              <SelectableTextBlock Text="{Binding Text}"/>
+                              <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border Classes="chip" IsVisible="{Binding IsCommand}"><TextBlock Text="Command"/></Border>
+                                <TextBlock Text="{Binding App}" Classes="caption subtle" VerticalAlignment="Center"/>
+                                <TextBlock Text="Failed" Classes="caption" Foreground="{DynamicResource Signal}" IsVisible="{Binding Failed}" VerticalAlignment="Center"/>
+                                <PathIcon Data="{StaticResource IconFlag}" Width="12" Height="12" Foreground="{DynamicResource FgMuted}" IsVisible="{Binding Flagged}"/>
+                              </StackPanel>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Classes="rowActions" Orientation="Horizontal" VerticalAlignment="Top" Spacing="2">
+                              <Button Classes="icon" Command="{Binding CopyCommand}" ToolTip.Tip="Copy" AutomationProperties.Name="Copy"><PathIcon Data="{StaticResource IconCopy}" Width="16" Height="16"/></Button>
+                              <Button Classes="icon" Command="{Binding PasteCommand}" ToolTip.Tip="Paste" AutomationProperties.Name="Paste"><PathIcon Data="{StaticResource IconClipboardPaste}" Width="16" Height="16"/></Button>
+                              <Button Classes="icon" ToolTip.Tip="More" AutomationProperties.Name="More actions">
+                                <PathIcon Data="{StaticResource IconMoreHorizontal}" Width="16" Height="16"/>
+                                <Button.Flyout>
+                                  <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuItem Header="Copy" Command="{Binding CopyCommand}"/>
+                                    <MenuItem Header="Undo AI edit (copy what you said)" Command="{Binding CopyRawCommand}"/>
+                                    <MenuItem Header="Flag this transcript" Command="{Binding ToggleFlagCommand}"/>
+                                    <MenuItem Header="-"/>
+                                    <MenuItem Header="Delete" Command="{Binding DeleteCommand}"/>
+                                  </MenuFlyout>
+                                </Button.Flyout>
+                              </Button>
+                            </StackPanel>
+                          </Grid>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </Border>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- Empty states -->
+        <StackPanel IsVisible="{Binding NoHistory}" HorizontalAlignment="Center" Spacing="8" Margin="0,48">
+          <PathIcon Data="{StaticResource IconMic}" Width="32" Height="32" Foreground="{DynamicResource FgSubtle}"/>
+          <TextBlock Text="Your dictations will show up here" Classes="h3" HorizontalAlignment="Center"/>
+          <TextBlock Classes="callout muted" HorizontalAlignment="Center" TextAlignment="Center" Text="Click into any text field, hold the hotkey and speak."/>
+        </StackPanel>
+        <StackPanel IsVisible="{Binding NoMatches}" HorizontalAlignment="Center" Spacing="8" Margin="0,48">
+          <PathIcon Data="{StaticResource IconSearch}" Width="32" Height="32" Foreground="{DynamicResource FgSubtle}"/>
+          <TextBlock Text="No transcripts match that search" Classes="h3" HorizontalAlignment="Center"/>
+        </StackPanel>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

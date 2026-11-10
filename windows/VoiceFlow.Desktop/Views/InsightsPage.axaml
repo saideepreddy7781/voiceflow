@@ -1,0 +1,97 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             x:Class="VoiceFlow.Desktop.Views.InsightsPage"
+             x:DataType="vm:InsightsViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="16" MaxWidth="880" Margin="{DynamicResource PagePadding}">
+      <StackPanel Spacing="4">
+        <TextBlock Text="Insights" Classes="title"/>
+        <TextBlock Text="Usage" Classes="body muted"/>
+      </StackPanel>
+
+      <Grid ColumnDefinitions="*,16,*,16,*">
+        <Border Classes="card" Padding="20,16">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Words per minute" Classes="callout muted"/>
+            <TextBlock Text="{Binding WordsPerMinute}" Classes="stat"/>
+            <TextBlock Text="Typing averages about 40 wpm" Classes="caption subtle wrap"/>
+          </StackPanel>
+        </Border>
+        <Border Classes="card" Grid.Column="2" Padding="20,16">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Fixes made by VoiceFlow" Classes="callout muted"/>
+            <TextBlock Text="{Binding Fixes}" Classes="stat"/>
+            <TextBlock Text="{Binding FixesDetail}" Classes="caption subtle wrap"/>
+          </StackPanel>
+        </Border>
+        <Border Classes="card" Grid.Column="4" Padding="20,16">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Total words dictated" Classes="callout muted"/>
+            <TextBlock Text="{Binding TotalWords}" Classes="stat"/>
+            <TextBlock Text="{Binding Dictations}" Classes="caption subtle"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Border Classes="card" Padding="20,16">
+        <StackPanel Spacing="12">
+          <TextBlock Text="Desktop usage" Classes="h3"/>
+          <TextBlock Text="Dictate in a few apps to see where you use VoiceFlow." Classes="callout muted" IsVisible="{Binding !HasCategories}"/>
+          <ItemsControl ItemsSource="{Binding Categories}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><StackPanel Spacing="8"/></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:CategoryUsage">
+                <Grid ColumnDefinitions="168,*,56">
+                  <TextBlock Text="{Binding Name}" VerticalAlignment="Center" FontSize="14"/>
+                  <c:ShareBar Grid.Column="1" Share="{Binding Share}" Height="8" Fill="{DynamicResource MeterFill}" Track="{DynamicResource Track}"/>
+                  <TextBlock Grid.Column="2" Text="{Binding Percent}" Classes="callout muted" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card" Padding="20,16">
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="*,Auto,Auto,8,Auto,4,Auto">
+            <TextBlock Text="Activity" Classes="h3" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="1" Text="{Binding StreakText}" Classes="callout muted" VerticalAlignment="Center" Margin="0,0,16,0"/>
+            <TextBlock Grid.Column="2" Text="{Binding LongestText}" Classes="callout muted" VerticalAlignment="Center"/>
+            <Button Grid.Column="4" Classes="icon" Command="{Binding OlderCommand}" ToolTip.Tip="Older weeks" AutomationProperties.Name="Older weeks">
+              <PathIcon Data="{StaticResource IconChevronLeft}" Width="14" Height="14"/>
+            </Button>
+            <Button Grid.Column="6" Classes="icon" Command="{Binding NewerCommand}" IsEnabled="{Binding CanGoNewer}" ToolTip.Tip="Newer weeks" AutomationProperties.Name="Newer weeks">
+              <PathIcon Data="{StaticResource IconChevronRight}" Width="14" Height="14"/>
+            </Button>
+          </Grid>
+          <c:ActivityHeatmap DailyWords="{Binding DailyWords}" WeekOffset="{Binding WeekOffset}" Today="{Binding Today}"
+                             LabelBrush="{DynamicResource FgSubtle}" AutomationProperties.Name="Daily activity heatmap"/>
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <TextBlock Text="Less" Classes="caption subtle" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <Border Width="11" Height="11" CornerRadius="2.5">
+              <Border.Background><SolidColorBrush Color="{DynamicResource Heat0}"/></Border.Background>
+            </Border>
+            <Border Width="11" Height="11" CornerRadius="2.5">
+              <Border.Background><SolidColorBrush Color="{DynamicResource Heat1}"/></Border.Background>
+            </Border>
+            <Border Width="11" Height="11" CornerRadius="2.5">
+              <Border.Background><SolidColorBrush Color="{DynamicResource Heat2}"/></Border.Background>
+            </Border>
+            <Border Width="11" Height="11" CornerRadius="2.5">
+              <Border.Background><SolidColorBrush Color="{DynamicResource Heat3}"/></Border.Background>
+            </Border>
+            <Border Width="11" Height="11" CornerRadius="2.5">
+              <Border.Background><SolidColorBrush Color="{DynamicResource Heat4}"/></Border.Background>
+            </Border>
+            <TextBlock Text="More" Classes="caption subtle" VerticalAlignment="Center" Margin="4,0,0,0"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

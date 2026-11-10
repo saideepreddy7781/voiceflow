@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+        xmlns:v="using:VoiceFlow.Desktop.Views"
+        x:Class="VoiceFlow.Desktop.Views.OnboardingWindow"
+        x:DataType="vm:OnboardingViewModel"
+        Title="Welcome to VoiceFlow" Icon="/Assets/VoiceFlow.ico"
+        Width="760" Height="620" MinWidth="640" MinHeight="540"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBg}">
+  <v:OnboardingView/>
+</Window>

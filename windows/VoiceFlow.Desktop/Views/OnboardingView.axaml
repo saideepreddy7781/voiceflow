@@ -1,0 +1,169 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:v="using:VoiceFlow.Desktop.Views"
+             xmlns:vs="using:VoiceFlow.Desktop.Views.Settings"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             xmlns:svc="using:VoiceFlow.Desktop.Services"
+             x:Class="VoiceFlow.Desktop.Views.OnboardingView"
+             x:DataType="vm:OnboardingViewModel">
+  <DockPanel Margin="40,32,40,24">
+    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,24">
+      <ItemsControl ItemsSource="{Binding Pills}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><UniformGrid Rows="1"/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:OnboardingStep">
+            <Border Height="4" CornerRadius="2" Margin="0,0,6,0"
+                    Background="{DynamicResource Track}" Classes.reached="{Binding Reached}">
+              <Border.Styles>
+                <Style Selector="Border.reached"><Setter Property="Background" Value="{DynamicResource Fg}"/></Style>
+              </Border.Styles>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <TextBlock Text="{Binding StepCaption}" Classes="caption subtle"/>
+    </StackPanel>
+
+    <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="0,16,0,0">
+      <Button Content="Back" Command="{Binding BackCommand}" IsVisible="{Binding ShowBack}"/>
+      <Button Grid.Column="2" Classes="primary" Content="{Binding ContinueLabel}" Command="{Binding NextCommand}"
+              IsVisible="{Binding ShowContinue}" IsEnabled="{Binding CanContinue}" IsDefault="True"/>
+      <Button Grid.Column="2" Classes="primary" Content="Explore VoiceFlow" Command="{Binding FinishCommand}"
+              IsVisible="{Binding IsDone}" IsDefault="True"/>
+    </Grid>
+
+    <Panel>
+      <!-- Welcome -->
+      <StackPanel Spacing="16" IsVisible="{Binding IsWelcome}">
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <c:LogoMark Width="64" Height="64"/>
+          <TextBlock Text="Speak. VoiceFlow types." Classes="title" FontSize="32" VerticalAlignment="Center"/>
+        </StackPanel>
+        <TextBlock Classes="body muted wrap" FontSize="16" LineHeight="25"
+                   Text="Hold a key in any app, talk, and let go. VoiceFlow writes what you meant: filler words gone, your corrections applied, punctuation and lists in place."/>
+        <Border Classes="inset" Margin="0,8,0,0">
+          <StackPanel Spacing="8">
+            <TextBlock Text="You said" Classes="overline"/>
+            <TextBlock Text="um so let's meet on tuesday no actually wednesday at uh three" Classes="callout muted wrap"/>
+            <TextBlock Text="VoiceFlow types" Classes="overline" Margin="0,8,0,0"/>
+            <TextBlock Text="Let's meet on Wednesday at 3." Classes="body wrap"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- Groq key -->
+      <StackPanel Spacing="16" IsVisible="{Binding IsKey}">
+        <TextBlock Text="Connect Groq" Classes="title"/>
+        <TextBlock Classes="body muted wrap" Text="VoiceFlow uses Groq for speech recognition and cleanup with your own free key. No account with VoiceFlow is needed."/>
+        <Border Classes="card" Padding="20">
+          <v:KeyFieldView DataContext="{Binding Groq}"/>
+        </Border>
+      </StackPanel>
+
+      <!-- Microphone -->
+      <Panel IsVisible="{Binding IsMic}">
+      <StackPanel Spacing="16" DataContext="{Binding General}" x:DataType="vm:GeneralSettings">
+        <TextBlock Text="Test your microphone" Classes="title"/>
+        <TextBlock Classes="body muted wrap" Text="Say something. The meter should move with your voice."/>
+        <Border Classes="card" Padding="24">
+          <StackPanel Spacing="16">
+            <c:LevelMeter Level="{Binding TestLevel}" Fill="{DynamicResource MeterFill}" Track="{DynamicResource Track}" Segments="40" Height="14"/>
+            <Grid ColumnDefinitions="*,12,Auto">
+              <ComboBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" HorizontalAlignment="Stretch" AutomationProperties.Name="Microphone">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="svc:MicrophoneDevice"><TextBlock Text="{Binding Name}" FontSize="13"/></DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Button Grid.Column="2" Content="Test microphone" Command="{Binding ToggleTestCommand}"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+        <TextBlock Classes="callout muted wrap" Text="Meter not moving? Pick another microphone, or check that no other app is using it."/>
+      </StackPanel>
+      </Panel>
+
+      <!-- Hotkey practice -->
+      <StackPanel Spacing="16" IsVisible="{Binding IsHotkey}">
+        <TextBlock Text="Your shortcut" Classes="title"/>
+        <Grid ColumnDefinitions="*,16,*">
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Push to talk" Classes="h3"/>
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="Hold" Classes="callout muted" VerticalAlignment="Center"/>
+                <Border Classes="keycap"><TextBlock Text="{Binding HotkeyName}"/></Border>
+                <TextBlock Text=", speak, let go." Classes="callout muted" VerticalAlignment="Center"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Grid.Column="2" Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Hands-free" Classes="h3"/>
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <Border Classes="keycap"><TextBlock Text="{Binding HandsFreeName}"/></Border>
+                <TextBlock Text="or double-tap." Classes="callout muted" VerticalAlignment="Center"/>
+              </StackPanel>
+              <TextBlock Text="Press again to finish." Classes="caption subtle"/>
+            </StackPanel>
+          </Border>
+        </Grid>
+        <Border Classes="card" Padding="20">
+          <Grid ColumnDefinitions="Auto,*">
+            <PathIcon Data="{StaticResource IconKeyboard}" Width="24" Height="24" Foreground="{DynamicResource FgMuted}" IsVisible="{Binding !HotkeyDetected}"/>
+            <PathIcon Data="{StaticResource IconCheckmarkCircle}" Width="24" Height="24" IsVisible="{Binding HotkeyDetected}"/>
+            <TextBlock Grid.Column="1" Text="{Binding HotkeyPrompt}" Classes="body wrap" VerticalAlignment="Center" Margin="12,0,0,0"/>
+          </Grid>
+        </Border>
+      </StackPanel>
+
+      <!-- Languages -->
+      <ScrollViewer IsVisible="{Binding IsLanguages}">
+        <StackPanel Spacing="16" DataContext="{Binding General}" x:DataType="vm:GeneralSettings">
+          <TextBlock Text="Your languages" Classes="title"/>
+          <TextBlock Classes="body muted wrap" Text="Pick the languages you speak. One language is most accurate; with several, VoiceFlow detects which one you're using."/>
+          <ItemsControl ItemsSource="{Binding VisibleLanguages}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:LanguageItem">
+                <ToggleButton Theme="{StaticResource ChipToggle}" Content="{Binding Name}" IsChecked="{Binding IsSelected}" Margin="0,0,8,8"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <StackPanel Spacing="8" IsVisible="{Binding SpeaksTelugu}">
+            <TextBlock Text="Write Telugu as" Classes="callout" FontWeight="SemiBold"/>
+            <ItemsControl ItemsSource="{Binding ScriptOptions}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="8"/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:TeluguScriptOption">
+                  <RadioButton Theme="{StaticResource OptionCard}" GroupName="obtelugu" IsChecked="{Binding IsSelected}" Padding="16,12" AutomationProperties.Name="{Binding Name}">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="Medium"/>
+                        <TextBlock Text="{Binding Example}" Classes="callout muted wrap"/>
+                      </StackPanel>
+                      <PathIcon Grid.Column="1" Data="{StaticResource IconCheckmarkCircle}" Width="18" Height="18" IsVisible="{Binding IsSelected}" Margin="12,0,0,0"/>
+                    </Grid>
+                  </RadioButton>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- Done -->
+      <StackPanel Spacing="16" IsVisible="{Binding IsDone}">
+        <PathIcon Data="{StaticResource IconCheckmarkCircle}" Width="48" Height="48"/>
+        <TextBlock Text="You're all set" Classes="title" FontSize="32"/>
+        <TextBlock Classes="body muted wrap" FontSize="16" LineHeight="25" Text="Hold your shortcut in any app to dictate. The Flow bar at the bottom of your screen shows when VoiceFlow is listening."/>
+      </StackPanel>
+    </Panel>
+  </DockPanel>
+</UserControl>

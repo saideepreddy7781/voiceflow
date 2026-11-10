@@ -1,0 +1,69 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             xmlns:c="using:VoiceFlow.Desktop.Controls"
+             x:Class="VoiceFlow.Desktop.Views.LiveMeetingView"
+             x:DataType="vm:LiveMeetingViewModel">
+  <DockPanel Margin="32,16,32,24">
+    <StackPanel DockPanel.Dock="Top" Spacing="24">
+      <Grid ColumnDefinitions="*,Auto,16,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Ellipse Classes="recdot" Width="10" Height="10"/>
+          <TextBlock Text="{Binding Title}" Classes="h2" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+        <TextBlock Grid.Column="1" Text="{Binding Elapsed}" Classes="statSmall" FontSize="20" VerticalAlignment="Center" FontFeatures="tnum"/>
+        <Button Grid.Column="3" Classes="signal" Command="{Binding StopCommand}" VerticalAlignment="Center" AutomationProperties.Name="Stop recording">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Border Classes="stopGlyph" Background="#FFFFFF" VerticalAlignment="Center"/>
+            <TextBlock Text="Stop" Foreground="#FFFFFF" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </Grid>
+
+      <Border Classes="notice" IsVisible="{Binding MicOnly}">
+        <TextBlock Classes="callout wrap" Text="Recording your microphone only. Turn on system audio in Settings to capture the other people."/>
+      </Border>
+
+      <Grid ColumnDefinitions="*,16,*">
+        <Border Classes="card" Padding="20,16">
+          <StackPanel Spacing="12">
+            <TextBlock Text="You (microphone)" Classes="callout muted"/>
+            <c:LevelMeter Level="{Binding MicLevel}" Fill="{DynamicResource MeterFill}" Track="{DynamicResource Track}"/>
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <PathIcon Data="{StaticResource IconCheckmarkCircle}" Width="14" Height="14" Foreground="{DynamicResource FgSubtle}" IsVisible="{Binding !HealthProblem}"/>
+              <PathIcon Data="{StaticResource IconWarning}" Width="14" Height="14" Foreground="{DynamicResource Signal}" IsVisible="{Binding HealthProblem}"/>
+              <TextBlock Text="{Binding HealthText}" Classes="caption subtle wrap" VerticalAlignment="Center"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="2" Classes="card" Padding="20,16" IsVisible="{Binding HasOthers}">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Others (meeting audio)" Classes="callout muted wrap"/>
+            <c:LevelMeter Level="{Binding SystemLevel}" Fill="{DynamicResource MeterFill}" Track="{DynamicResource Track}"/>
+            <TextBlock Text="The transcript fills in at pauses" Classes="caption subtle wrap"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+      <TextBlock Text="Transcript" Classes="h3"/>
+    </StackPanel>
+
+    <ScrollViewer Margin="0,12,0,0">
+      <ItemsControl ItemsSource="{Binding Lines}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><StackPanel Spacing="12"/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:TranscriptRow">
+            <Grid ColumnDefinitions="56,76,*">
+              <TextBlock Text="{Binding Time}" Classes="caption subtle" Margin="0,3,0,0" VerticalAlignment="Top"/>
+              <Panel Grid.Column="1" VerticalAlignment="Top" Margin="0,1,0,0" HorizontalAlignment="Left">
+                <Border Classes="chip" Classes.you="{Binding IsYou}"><TextBlock Text="{Binding Speaker}"/></Border>
+              </Panel>
+              <SelectableTextBlock Grid.Column="2" Text="{Binding Text}"/>
+            </Grid>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

@@ -1,0 +1,51 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.SnippetsPage"
+             x:DataType="vm:SnippetsViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="16" MaxWidth="880" Margin="{DynamicResource PagePadding}">
+      <Grid ColumnDefinitions="*,Auto,8,Auto">
+        <StackPanel Spacing="4" Margin="0,0,16,0">
+          <TextBlock Text="Snippets" Classes="title"/>
+          <TextBlock Text="Say a short cue and VoiceFlow types the full text, on its own or inside a sentence." Classes="body muted wrap"/>
+        </StackPanel>
+        <Button Grid.Column="1" Content="Import" Command="{Binding ImportCommand}" VerticalAlignment="Top" Margin="0,4,0,0"/>
+        <Button Grid.Column="3" Classes="primary" Command="{Binding AddCommand}" VerticalAlignment="Top" Margin="0,4,0,0">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <PathIcon Data="{StaticResource IconAdd}" Width="14" Height="14" Foreground="{DynamicResource OnPrimary}"/>
+            <TextBlock Text="Add snippet" Foreground="{DynamicResource OnPrimary}" FontSize="13" FontWeight="Medium"/>
+          </StackPanel>
+        </Button>
+      </Grid>
+
+      <TextBlock Text="{Binding Notice}" Classes="callout muted" IsVisible="{Binding HasNotice}"/>
+
+      <Border Classes="card list" Padding="0" IsVisible="{Binding !IsEmpty}">
+        <ItemsControl ItemsSource="{Binding Rows}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:SnippetRow">
+              <Border Classes="row" Padding="20,12">
+                <Grid ColumnDefinitions="200,24,*,Auto">
+                  <TextBlock Text="{Binding Trigger}" FontSize="14" FontWeight="Medium" TextWrapping="Wrap"/>
+                  <PathIcon Grid.Column="1" Data="{StaticResource IconArrowRight}" Width="12" Height="12" Foreground="{DynamicResource FgSubtle}" VerticalAlignment="Top" Margin="0,4,0,0"/>
+                  <TextBlock Grid.Column="2" Text="{Binding Expansion}" Classes="body muted wrap" MaxLines="3" TextTrimming="CharacterEllipsis" Margin="0,0,16,0"/>
+                  <StackPanel Grid.Column="3" Classes="rowActions" Orientation="Horizontal" Spacing="2" VerticalAlignment="Top">
+                    <Button Classes="icon" Command="{Binding EditCommand}" ToolTip.Tip="Edit" AutomationProperties.Name="Edit snippet"><PathIcon Data="{StaticResource IconEdit}" Width="16" Height="16"/></Button>
+                    <Button Classes="icon" Command="{Binding DeleteCommand}" ToolTip.Tip="Delete" AutomationProperties.Name="Delete snippet"><PathIcon Data="{StaticResource IconDelete}" Width="16" Height="16"/></Button>
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+
+      <StackPanel IsVisible="{Binding IsEmpty}" HorizontalAlignment="Center" Spacing="8" Margin="0,48">
+        <PathIcon Data="{StaticResource IconTextBulletListSquare}" Width="32" Height="32" Foreground="{DynamicResource FgSubtle}"/>
+        <TextBlock Text="No snippets yet" Classes="h3" HorizontalAlignment="Center"/>
+        <TextBlock Text="Try one for your calendar link, address or a reply you send often." Classes="callout muted wrap" MaxWidth="420" TextAlignment="Center"/>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

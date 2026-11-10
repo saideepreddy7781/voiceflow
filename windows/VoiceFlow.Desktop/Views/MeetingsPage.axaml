@@ -1,0 +1,61 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VoiceFlow.Desktop.ViewModels"
+             x:Class="VoiceFlow.Desktop.Views.MeetingsPage"
+             x:DataType="vm:MeetingsViewModel">
+  <Grid ColumnDefinitions="304,1,*">
+    <DockPanel Margin="24,0,16,16">
+      <StackPanel DockPanel.Dock="Top" Spacing="16" Margin="0,16,0,16">
+        <TextBlock Text="Meetings" Classes="title"/>
+        <Button Classes="primary" HorizontalAlignment="Stretch" Command="{Binding TakeNotesCommand}" IsVisible="{Binding IsIdle}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconRecord}" Width="16" Height="16" Foreground="{DynamicResource OnPrimary}"/>
+            <TextBlock Text="Take notes" Foreground="{DynamicResource OnPrimary}" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+        <Button Classes="signal" HorizontalAlignment="Stretch" Command="{Binding StopCommand}" IsVisible="{Binding IsRecording}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Border Classes="stopGlyph" Background="#FFFFFF" VerticalAlignment="Center"/>
+            <TextBlock Text="Stop and write notes" Foreground="#FFFFFF" FontSize="13" FontWeight="Medium" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+        <TextBlock Text="Writing notes..." Classes="callout muted" HorizontalAlignment="Center" IsVisible="{Binding IsWriting}"/>
+        <TextBox Classes="search" Text="{Binding SearchText}" PlaceholderText="Search meetings" AutomationProperties.Name="Search meetings">
+          <TextBox.InnerLeftContent>
+            <PathIcon Data="{StaticResource IconSearch}" Width="16" Height="16" Foreground="{DynamicResource FgSubtle}" Margin="12,0,0,0"/>
+          </TextBox.InnerLeftContent>
+        </TextBox>
+      </StackPanel>
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8" Margin="4,12,0,0" IsVisible="{Binding HasFolder}">
+        <PathIcon Data="{StaticResource IconFolder}" Width="14" Height="14" Foreground="{DynamicResource FgSubtle}"/>
+        <TextBlock Text="{Binding NotesFolder}" Classes="caption subtle" VerticalAlignment="Center"/>
+      </StackPanel>
+      <Panel>
+        <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:MeetingListItem">
+              <StackPanel Spacing="2">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <Ellipse Classes="recdot" IsVisible="{Binding Recording}"/>
+                  <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                <TextBlock Text="{Binding Meta}" Classes="caption subtle" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="Needs attention" Classes="caption" Foreground="{DynamicResource Signal}" IsVisible="{Binding NeedsAttention}"/>
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock IsVisible="{Binding NoMeetings}" Classes="callout muted wrap" Margin="4,8"
+                   Text="Start Notetaker when a call begins, and your notes will appear here."/>
+      </Panel>
+    </DockPanel>
+    <Rectangle Grid.Column="1" Classes="vhair"/>
+    <Panel Grid.Column="2">
+      <TransitioningContentControl Content="{Binding Pane}"/>
+      <StackPanel IsVisible="{Binding Pane, Converter={x:Static ObjectConverters.IsNull}}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+        <PathIcon Data="{StaticResource IconPeopleAudience}" Width="32" Height="32" Foreground="{DynamicResource FgSubtle}"/>
+        <TextBlock Text="Your meeting notes appear here" Classes="h3" HorizontalAlignment="Center"/>
+      </StackPanel>
+    </Panel>
+  </Grid>
+</UserControl>
