@@ -13,6 +13,23 @@ cat "$ROOT/docs/releases/$TAG.md"
 
 cat <<EOF
 
+## Install with one command
+
+On a Mac, in Terminal:
+
+\`\`\`bash
+curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install.sh | bash
+\`\`\`
+
+On Windows, in PowerShell:
+
+\`\`\`powershell
+irm https://raw.githubusercontent.com/$REPO/main/scripts/install.ps1 | iex
+\`\`\`
+
+These install the latest release, check its SHA-256 (and on macOS its signature) first, and need no Open Anyway
+or Run anyway click. The files below are the same builds for downloading by hand.
+
 ## Verify your download
 
 Every file below has a SHA-256 in \`SHA256SUMS.txt\` and a build attestation from GitHub Actions.

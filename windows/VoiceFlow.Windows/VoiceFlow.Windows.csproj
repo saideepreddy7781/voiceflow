@@ -13,8 +13,18 @@
     <AssemblyTitle>VoiceFlow</AssemblyTitle>
     <Description>Voice dictation for Windows: hold a hotkey, speak, and clean text is typed where you are.</Description>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <!-- Single-file publish settings (the flags are also passed on the command line in CI). -->
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!--
+      Release publish: dotnet publish -r win-x64 -c Release self-contained, with -p:PublishSingleFile=true.
+      The two settings below only matter for that single-file publish.
+      Native libraries (Skia, HarfBuzz, ANGLE) go inside the exe, so the download is one file. .NET unpacks them
+      to %TEMP%\.net\VoiceFlow on first launch.
+      The bundle is not compressed. A compressed bundle is mostly high-entropy data, which is how packed
+      malware looks to antivirus heuristics, and it is decompressed into memory at every launch. The cost is
+      size: the x64 exe grows from 47 MB to 98 MB. See docs/RELEASING.md.
+    -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
     <!-- Audio capture (WASAPI microphone and loopback). MIT licensed. -->

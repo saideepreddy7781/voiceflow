@@ -67,6 +67,16 @@ jobs:
         run: |
           scripts/release.sh
           echo "requirement=$(cat build/designated-requirement.txt)" >> "$GITHUB_OUTPUT"
+      # scripts/install.sh only installs builds signed with the certificate it pins.
+      - name: The installer pins this build's certificate
+        run: |
+          req="$(cat build/designated-requirement.txt)"
+          pin="$(sed -n 's/^CERT_LEAF="\([0-9a-f]*\)"$/\1/p' scripts/install.sh)"
+          case "$req" in
+            *"certificate leaf = H\"$pin\""*) echo "scripts/install.sh pins $pin, which signed this build." ;;
+            *"certificate leaf"*) echo "::error::This build is signed with a certificate scripts/install.sh doesn't pin. Update CERT_LEAF there first."; exit 1 ;;
+            *) echo "::warning::This build is ad hoc signed, so scripts/install.sh will refuse to install it." ;;
+          esac
       - name: Remove the temporary keychain
         if: always()
         run: |
@@ -74,7 +84,10 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
-          path: build/VoiceFlow-${{ needs.version.outputs.version }}-macOS.dmg
+          # designated-requirement.txt is published too: scripts/install.sh compares it with its pin.
+          path: |
+            build/VoiceFlow-${{ needs.version.outputs.version }}-macOS.dmg
+            build/designated-requirement.txt
           if-no-files-found: error
 
   windows:
@@ -90,6 +103,7 @@ jobs:
           dotnet-version: 8.0.x
       - name: Unit tests
         run: dotnet test windows/VoiceFlow.Core.Tests -c Release
+      # Single file, uncompressed. The settings are in VoiceFlow.Windows.csproj; docs/RELEASING.md says why.
       - name: Publish x64 and arm64
         shell: pwsh
         run: |
@@ -97,10 +111,10 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           foreach ($arch in 'x64', 'arm64') {
             dotnet publish windows/VoiceFlow.Windows -c Release -r "win-$arch" --self-contained true `
-              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
-              -o "out/win-$arch"
+              -p:PublishSingleFile=true -o "out/win-$arch"
             if ($LASTEXITCODE -ne 0) { throw "publish failed for $arch" }
             Copy-Item "out/win-$arch/VoiceFlow.exe" "dist/VoiceFlow-$v-Windows-$arch.exe"
+            '{0}: {1:N1} MB' -f $arch, ((Get-Item "out/win-$arch/VoiceFlow.exe").Length / 1MB)
           }
       - name: Self-test (x64)
         shell: pwsh
@@ -109,6 +123,9 @@ jobs:
           $p = Start-Process "dist/VoiceFlow-$v-Windows-x64.exe" -ArgumentList '--self-test','--self-test-out','selftest.txt' -Wait -PassThru
           Get-Content selftest.txt
           if ($p.ExitCode -ne 0) { throw "Self-test failed with exit code $($p.ExitCode)" }
+      - name: Installer test (x64)
+        shell: pwsh
+        run: ./scripts/test-install-windows.ps1 -Exe "dist/VoiceFlow-${{ needs.version.outputs.version }}-Windows-x64.exe" -Version '${{ needs.version.outputs.version }}' -Arch x64 -SkipNetwork
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
@@ -118,8 +135,11 @@ jobs:
   windows-arm64-test:
     needs: [version, windows]
     runs-on: windows-11-arm
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows
@@ -131,6 +151,9 @@ jobs:
           $p = Start-Process "dist/VoiceFlow-$v-Windows-arm64.exe" -ArgumentList '--self-test','--self-test-out','selftest.txt' -Wait -PassThru
           Get-Content selftest.txt
           if ($p.ExitCode -ne 0) { throw "Self-test failed with exit code $($p.ExitCode)" }
+      - name: Installer test (arm64)
+        shell: pwsh
+        run: ./scripts/test-install-windows.ps1 -Exe "dist/VoiceFlow-${{ needs.version.outputs.version }}-Windows-arm64.exe" -Version '${{ needs.version.outputs.version }}' -Arch arm64 -SkipNetwork
 
   publish:
     needs: [version, macos, windows, windows-arm64-test]
@@ -150,7 +173,7 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum * > SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Build provenance (verify with `gh attestation verify <file> -R ${{ github.repository }}`)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -158,6 +181,7 @@ jobs:
           subject-path: |
             dist/*.dmg
             dist/*.exe
+            dist/designated-requirement.txt
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

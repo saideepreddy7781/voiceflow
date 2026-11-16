@@ -39,6 +39,37 @@ jobs:
           codesign -d --entitlements - build/VoiceFlow.app 2>/dev/null | grep -q audio-input
           lipo -archs build/VoiceFlow.app/Contents/MacOS/VoiceFlow
 
+  macos-installer:
+    # scripts/install.sh against the published 0.2.0 release, the way a user runs it.
+    runs-on: macos-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install, check, reinstall and uninstall
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir="$RUNNER_TEMP/Applications"
+          app="$dir/VoiceFlow.app"
+          bash -s -- --version 0.2.0 --dir "$dir" --no-launch < scripts/install.sh
+          if xattr -p com.apple.quarantine "$app" >/dev/null 2>&1; then echo "::error::quarantine flag present"; exit 1; fi
+          xattr -l "$app"
+          codesign -d -r- "$app"
+          spctl -a -vv "$app" || echo "spctl rejects it, as expected for a build that isn't notarized"
+          bash scripts/install.sh --version 0.2.0 --dir "$dir" --no-launch | grep -q "Reinstalled VoiceFlow 0.2.0"
+          if bash scripts/install.sh --version 0.1.0 --dir "$dir" --no-launch; then echo "::error::0.1.0 was not refused"; exit 1; fi
+          bash scripts/install.sh --uninstall --dir "$dir"
+          test ! -e "$app"
+          for left in "${TMPDIR:-/tmp}"/voiceflow-install.*; do
+            if [ -e "$left" ]; then echo "::error::temporary folder left behind: $left"; exit 1; fi
+          done
+
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -56,11 +87,15 @@ jobs:
           dotnet test windows/VoiceFlow.Core.Tests -c Release
           dotnet test windows/VoiceFlow.Desktop.Tests -c Release
 
-      - name: Publish (x64)
-        run: >
-          dotnet publish windows/VoiceFlow.Windows -c Release -r win-x64 --self-contained true
-          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
-          -o out/win-x64
+      # Single file, uncompressed. The settings are in VoiceFlow.Windows.csproj.
+      - name: Publish x64 and arm64
+        shell: pwsh
+        run: |
+          foreach ($arch in 'x64', 'arm64') {
+            dotnet publish windows/VoiceFlow.Windows -c Release -r "win-$arch" --self-contained true -p:PublishSingleFile=true -o "out/win-$arch"
+            if ($LASTEXITCODE -ne 0) { throw "publish failed for $arch" }
+            '{0}: {1:N1} MB' -f $arch, ((Get-Item "out/win-$arch/VoiceFlow.exe").Length / 1MB)
+          }
 
       - name: Self-test on Windows
         shell: pwsh
@@ -68,6 +103,56 @@ jobs:
           $p = Start-Process out/win-x64/VoiceFlow.exe -ArgumentList '--self-test','--self-test-out','selftest.txt' -Wait -PassThru
           Get-Content selftest.txt
           if ($p.ExitCode -ne 0) { throw "Self-test failed with exit code $($p.ExitCode)" }
+
+      - name: Microsoft Defender scan (information only)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          if (-not (Test-Path $mp)) { 'Microsoft Defender is not available on this runner.'; exit 0 }
+          foreach ($arch in 'x64', 'arm64') {
+            & $mp -Scan -ScanType 3 -File (Resolve-Path "out/win-$arch/VoiceFlow.exe").Path -DisableRemediation
+            "win-${arch}: MpCmdRun exit code $LASTEXITCODE (0 means no threat found, 2 means a threat was found)"
+          }
+          exit 0
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-ci
+          path: out/win-*/VoiceFlow.exe
+          if-no-files-found: error
+          retention-days: 3
+
+  windows-installer:
+    # scripts/install.ps1 against the exe built above, on x64 and on Arm.
+    needs: windows
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-ci
+          path: out
+
+      - name: Install, upgrade, refuse a tampered file, uninstall
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $v = (Select-Xml -Path windows/Directory.Build.props -XPath '//Version').Node.InnerText
+          ./scripts/test-install-windows.ps1 -Exe "out/win-$env:ARCH/VoiceFlow.exe" -Version $v -Arch $env:ARCH
 
   checks:
     runs-on: ubuntu-latest
@@ -91,3 +176,14 @@ jobs:
 
       - name: Homebrew cask is valid Ruby
         run: ruby -c Casks/voiceflow.rb
+
+      - name: Shell scripts pass shellcheck
+        run: shellcheck scripts/install.sh scripts/release-notes.sh scripts/update-cask.sh
+
+      - name: PowerShell scripts pass PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+          $found = @(foreach ($f in 'scripts/install.ps1', 'scripts/test-install-windows.ps1') { Invoke-ScriptAnalyzer -Path $f -Severity Error, Warning })
+          $found | Format-Table -AutoSize
+          if ($found.Count) { throw "$($found.Count) PSScriptAnalyzer finding(s)" }
