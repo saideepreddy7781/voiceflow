@@ -236,11 +236,11 @@ public class FlowBarPlacementTests
     public void ToastsShiftSidewaysToStayOnScreen()
     {
         var toast = new PxSize(400, 50);
-        // Capsule docked at the left edge: centred, the toast would start at x = -126.
+        // Capsule docked at the left edge (x = 14): centred on it, the toast would start at x = -126.
         var (_, offset) = BarPlacement.Extras(new PxPoint(74, 500), Pill, toast, 6, Laptop.WorkArea, 1.0);
-        Assert.Equal(4 + 200 - 74, offset);
+        Assert.Equal(14 + 200 - 74, offset);   // its left edge lines up with the docked capsule's
         var (_, right) = BarPlacement.Extras(new PxPoint(1846, 500), Pill, toast, 6, Laptop.WorkArea, 1.0);
-        Assert.Equal(1920 - 4 - 200 - 1846, right);
+        Assert.Equal(1920 - 14 - 200 - 1846, right);
     }
 
     [Fact]

@@ -155,6 +155,13 @@ internal sealed class FlowBarHost : IDisposable
 
     // MARK: Shape
 
+    /// <summary>Sets the window region again, for the self-test after it has removed it.</summary>
+    public void ReapplyShape()
+    {
+        _parts = [];
+        UpdateShape();
+    }
+
     void UpdateShape()
     {
         if (_handle == IntPtr.Zero || !_window.IsVisible) return;

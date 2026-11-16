@@ -720,9 +720,10 @@ internal static class SelfTest
             return candidates.Where(p => p.Item2 >= frame.Left && p.Item2 < frame.Right && p.Item3 >= frame.Top && p.Item3 < frame.Bottom && !InShape(p.Item2, p.Item3)).ToList();
         }
 
-        /// <summary>Moves the pointer onto the window behind, away from the bar.</summary>
+        /// <summary>Moves the pointer onto the window behind, away from the bar, with the bar in front.</summary>
         void Park()
         {
+            SetWindowPos(_host.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             SetCursorPos(_behind.Bounds.X + 20, _behind.Bounds.Y + 20);
             PumpFor(TimeSpan.FromMilliseconds(60));
         }
@@ -732,8 +733,19 @@ internal static class SelfTest
             Park();
             var c = Capsule();
             // Five device-independent pixels in from the capsule's left end is plain fill (#161616).
-            var fill = ReadPixel(c.X + (int)Math.Round(5 * Scale), c.Y + c.Height / 2);
-            if (!Near(fill, 0x16, 0x16, 0x16, 24)) throw new SkipException($"the capsule's fill was not on screen (read #{fill.R:X2}{fill.G:X2}{fill.B:X2}); headless desktop, or the bar did not paint");
+            int fx = c.X + (int)Math.Round(5 * Scale), fy = c.Y + c.Height / 2;
+            var fill = ReadPixel(fx, fy);
+            if (!Near(fill, 0x16, 0x16, 0x16, 24))
+            {
+                // Without the region: if the fill shows now, the region is what hid it.
+                SetWindowRgn(_host.Handle, IntPtr.Zero, true);
+                PumpFor(TimeSpan.FromMilliseconds(300));
+                var unshaped = ReadPixel(fx, fy);
+                _host.ReapplyShape();
+                PumpFor(TimeSpan.FromMilliseconds(100));
+                Assert(!Near(unshaped, 0x16, 0x16, 0x16, 24), "the bar paints without its window region but not with it");
+                throw new SkipException($"the capsule's fill was not on screen (read #{fill.R:X2}{fill.G:X2}{fill.B:X2}); headless desktop, or the bar did not paint");
+            }
             var outside = OutsidePoints();
             Assert(outside.Count >= 3, $"only {outside.Count} test points outside the shape");
             foreach (var (name, x, y) in outside)
@@ -873,7 +885,7 @@ internal static class SelfTest
     static bool Click(int x, int y)
     {
         SetCursorPos(x, y);
-        PumpFor(TimeSpan.FromMilliseconds(30));
+        PumpFor(TimeSpan.FromMilliseconds(80));   // long enough for the fallback's 33 ms timer, if it is in use
         return SendInput(2, [MouseInput(MOUSEEVENTF_LEFTDOWN), MouseInput(MOUSEEVENTF_LEFTUP)], Marshal.SizeOf<INPUT>()) == 2;
     }
 
@@ -967,7 +979,7 @@ internal static class SelfTest
                     lpszClassName = _class,
                 };
                 if (RegisterClassExW(ref wc) == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-                Handle = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, _class, "VoiceFlow self-test", WS_POPUP,
+                Handle = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, _class, "VoiceFlow self-test", WS_POPUP,
                                          Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height, IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);
                 if (Handle == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
                 SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -991,6 +1003,8 @@ internal static class SelfTest
 
         IntPtr Procedure(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            // Like a window in the background: a click does not raise it above the bar.
+            if (msg == WM_MOUSEACTIVATE) return new IntPtr(MA_NOACTIVATE);
             if (msg == WM_LBUTTONDOWN)
             {
                 Interlocked.Exchange(ref _lastClick, lParam.ToInt64() & 0xFFFFFFFF);

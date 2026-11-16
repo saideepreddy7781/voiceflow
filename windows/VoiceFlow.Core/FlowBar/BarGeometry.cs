@@ -192,7 +192,9 @@ public static class BarPlacement
         var roomAbove = capsuleTop - spacing - gap - work.Y;
         var roomBelow = work.Bottom - gap - spacing - capsuleBottom;
         var below = roomAbove < extras.Height && roomBelow > roomAbove;
-        var left = ClampSpan(capsuleCentre.X - extras.Width / 2, extras.Width, work.X + gap, work.Right - gap);
+        // Sideways it keeps the docking gap, so next to a docked capsule the two line up.
+        var side = Px(EdgeGap, scale);
+        var left = ClampSpan(capsuleCentre.X - extras.Width / 2, extras.Width, work.X + side, work.Right - side);
         return (below, left + extras.Width / 2 - capsuleCentre.X);
     }
 }
