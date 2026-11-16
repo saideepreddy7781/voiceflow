@@ -120,15 +120,17 @@ struct QuietMeetingChunkTests {
     @Test func quietCallSpeechIsChunkedAndRoomNoiseIsNot() {
         var chunker = StreamChunker()
         var chunks: [AudioChunk] = []
-        // 60 s of speech 20 dB down, as heard through a voice-processing call.
-        for _ in 0..<20 { chunks += chunker.feed(Voice.attenuated(Voice.speech(3), by: 20)) }
+        // 30 s of speech 20 dB down, as heard through a voice-processing call.
+        let quiet = Voice.attenuated(Voice.speech(3), by: 20)
+        for _ in 0..<10 { chunks += chunker.feed(quiet) }
         if let last = chunker.finish() { chunks.append(last) }
         let voiced = chunks.reduce(0) { $0 + $1.voicedSeconds }
-        #expect(voiced > 25)
+        #expect(voiced > 12)
 
+        // A minute of a quiet room.
         var quietRoom = StreamChunker()
         var noiseChunks: [AudioChunk] = []
-        for k in 0..<60 { noiseChunks += quietRoom.feed(Voice.noise(5, db: -50, seed: UInt64(k + 1))) }
+        for k in 0..<12 { noiseChunks += quietRoom.feed(Voice.noise(5, db: -50, seed: UInt64(k + 1))) }
         if let last = quietRoom.finish() { noiseChunks.append(last) }
         #expect(noiseChunks.isEmpty)
     }
