@@ -154,7 +154,9 @@ final class FlowBarController {
     let barPanel = FlowBarPanel()
     let toastPanel = FlowBarPanel()
     private var barHost: ClickThroughHostingView<FlowBarView>!
-    private let toastHost: NSHostingController<ToastView>
+    private let toastHost: ClickThroughHostingView<ToastView>
+    /// Lays the toast out offscreen to find its size before its window is placed.
+    private let toastMeasure: NSHostingController<ToastView>
 
     /// The drawn bar, in the bar window's coordinates (origin top left), as SwiftUI last laid it out.
     private var barLocal: (kind: Kind, frame: CGRect)?
@@ -172,8 +174,10 @@ final class FlowBarController {
 
     init(state: PillState) {
         self.state = state
-        toastHost = NSHostingController(rootView: ToastView(state: state))
+        toastHost = ClickThroughHostingView(rootView: ToastView(state: state))
         toastHost.sizingOptions = []
+        toastMeasure = NSHostingController(rootView: ToastView(state: state))
+        toastMeasure.sizingOptions = []
         barHost = ClickThroughHostingView(rootView: FlowBarView(state: state, report: { [weak self] frame in
             self?.barLaidOut(frame)
         }, drag: { [weak self] ended in
@@ -181,7 +185,7 @@ final class FlowBarController {
         }))
         barHost.sizingOptions = []
         barPanel.contentView = barHost
-        toastPanel.contentViewController = toastHost
+        toastPanel.contentView = toastHost
         layout()
         observe()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -295,7 +299,7 @@ final class FlowBarController {
     private func placeToast(_ displays: [DisplayArea]) {
         guard let centre, let display = FlowBarGeometry.display(for: centre, among: displays) else { return }
         let bar = FlowBarGeometry.rect(centre: centre, size: barShape?.rect.size ?? estimatedSize(kind))
-        let fit = toastHost.sizeThatFits(in: CGSize(width: Self.toastWidth, height: 600))
+        let fit = toastMeasure.sizeThatFits(in: CGSize(width: Self.toastWidth, height: 600))
         let size = CGSize(width: ceil(fit.width), height: ceil(fit.height))
         toastPanel.setFrame(FlowBarGeometry.toastFrame(size: size, bar: bar, in: display.visible), display: true)
         if !toastPanel.isVisible || toastFading {
