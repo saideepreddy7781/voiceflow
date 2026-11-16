@@ -165,7 +165,7 @@ final class DictationController {
         let heldSeconds = Date().timeIntervalSince(startedAt)
         let samples = stopCapture()
         let audioSeconds = Double(samples.count) / AudioMath.sampleRate
-        let voiced = AudioMath.voicedSeconds(samples)
+        let voiced = SpeechRule.analyze(samples).voicedSeconds
         let verdict = AudioMath.captureVerdict(samples, heldSeconds: heldSeconds)
         if verdict != .speech {
             segments.forEach { $0.cancel() }
@@ -500,7 +500,8 @@ final class DictationController {
     private func startSegment(_ samples: [Float]) {
         guard !blockedField else { return }
         let prefs = model.preferences
-        let audio = prefs.whisperMode ? AudioMath.normalized(samples) : samples
+        // The same rule as meeting chunks: quiet speech (a voice-processing call, whispering) is raised before upload.
+        let audio = SpeechRule.prepareForUpload(samples, maximumGainDB: prefs.whisperMode ? 30 : SpeechRule.maximumGainDB)
         let prompts = WhisperPrompts(terms: whisperTerms, telugu: prefs.teluguScript, hindi: prefs.hindiScript)
         let model = self.model
         segments.append(Task.detached(priority: .userInitiated) {

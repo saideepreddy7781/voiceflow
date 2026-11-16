@@ -10,7 +10,8 @@ public struct SegmentCutter: Sendable {
     public var maximumSeconds = 30.0
     public var pauseSeconds = 0.4
     public var overlapSeconds = 0.2
-    public var silenceDB: Float = -45
+    /// A fixed pause level, for tests. Nil (the default) uses `SpeechRule` against the open segment's own noise floor.
+    public var silenceDB: Float?
 
     /// Start of the segment that is still open, in samples.
     public private(set) var openStart = 0
@@ -39,6 +40,7 @@ public struct SegmentCutter: Sendable {
         let frame = AudioMath.frameLength
 
         // Search for a pause from the minimum length onwards.
+        let silenceDB = self.silenceDB ?? SpeechRule.threshold(noiseFloorDB: SpeechRule.noiseFloor(frameDBs: SpeechRule.frameDBs(Array(samples))))
         var quiet = 0
         var i = samples.startIndex + minimum
         while i + frame <= samples.endIndex {

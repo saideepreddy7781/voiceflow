@@ -338,7 +338,7 @@ public final class MeetingRecorder {
         heardSpeech = true
         chunksSent[speaker, default: 0] += 1
         let request = request(for: speaker, settings: settings)
-        let wav = AudioMath.wav(AudioMath.normalized(chunk.samples))
+        let wav = AudioMath.wav(SpeechRule.prepareForUpload(chunk.samples))
         let transcribe = self.transcribe
         let retryDelay = self.retryDelay
         let log = self.log
@@ -437,7 +437,7 @@ public final class MeetingRecorder {
                 continue
             }
             let request = request(for: chunk.speaker, settings: settings)
-            let wav = AudioMath.wav(AudioMath.normalized(chunk.floatSamples))
+            let wav = AudioMath.wav(SpeechRule.prepareForUpload(chunk.floatSamples))
             let result = await Self.attempt(wav: wav, request: request, tries: Self.finalAttempts, deadline: deadline,
                                             transcribe: transcribe, retryDelay: retryDelay, log: log)
             switch result {

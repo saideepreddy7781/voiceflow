@@ -17,7 +17,8 @@ public enum AudioMath {
         rms <= 0 ? -120 : 20 * log10(rms)
     }
 
-    /// Seconds of audio louder than `thresholdDB`, measured in 30 ms frames.
+    /// Seconds of audio louder than a fixed `thresholdDB`, measured in 30 ms frames. Speech decisions use
+    /// `SpeechRule`, which follows the capture's noise floor; this stays for comparisons.
     public static func voicedSeconds(_ samples: [Float], thresholdDB: Float = -45) -> Double {
         var voiced = 0
         var i = 0
@@ -29,10 +30,10 @@ public enum AudioMath {
         return Double(voiced) / sampleRate
     }
 
-    /// True when a recording has too little speech to send. Whisper invents text such as
+    /// True when a recording has too little speech to send, by `SpeechRule`. Whisper invents text such as
     /// "Thank you." for silence, so silent recordings never reach the API.
     public static func isSilent(_ samples: [Float], minimumVoicedSeconds: Double = 0.25) -> Bool {
-        voicedSeconds(samples) < minimumVoicedSeconds
+        SpeechRule.analyze(samples).voicedSeconds < minimumVoicedSeconds
     }
 
     /// Whisper mode: raises quiet speech to a usable level. Peak-normalizes to `targetPeak`,

@@ -92,10 +92,16 @@ lines) loses 8. Nearly all removed lines are one or two words.
 The microphone and the call are transcribed separately, so You and Others are real labels. The sides are aligned by
 padding whichever one stalls by more than 2 seconds.
 
-`StreamChunker` keeps voiced audio only. It works in 30 ms frames. `VoiceGate` calls a frame voiced when it is above
-a threshold: the 10th percentile of the last 15 s of frame levels plus 12 dB, kept between -45 and -35 dBFS, refreshed
-each second. Each region keeps 210 ms before and 300 ms after the speech. Removed silences become a 0.25 s gap in the
-upload.
+`StreamChunker` keeps voiced audio only. It works in 30 ms frames. `VoiceGate` calls a frame voiced by `SpeechRule`,
+the rule dictation uses too: a frame is voiced when it is 10 dB above the noise floor, kept between -70 and -35
+dBFS. The floor is the 10th percentile of the frame levels, leaving out exact zeros. A meeting tracks it over the
+last 15 s, refreshed each second; a dictation measures it over its own recording. Each region keeps 210 ms before
+and 300 ms after the speech. Removed silences become a 0.25 s gap in the upload.
+
+The floor is relative because the level of a voice depends on the capture. While a call app uses voice processing,
+the built-in microphone becomes a raw array about 10 dB quieter, and the old fixed -45 dBFS floor called that speech
+silence. Room noise stays silent at any level, because noise sits at its own floor. Before upload, quiet speech is
+raised to -24 dBFS, by at most 24 dB (`SpeechRule.prepareForUpload`); Whisper mode allows 30 dB.
 
 A chunk is cut at a pause of 0.6 s once it holds 20 s of speech, forced at 45 s of speech, and cut at a pause after
 120 s so a quiet side still appears. Under 0.4 s of speech is not sent.

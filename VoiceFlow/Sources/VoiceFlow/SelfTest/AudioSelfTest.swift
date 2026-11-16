@@ -71,6 +71,7 @@ struct Scenario: Codable {
     var callApp: CallSimResult?
     var probes: [ProbeResult] = []
     var devices: [DeviceInfo] = []
+    var classifications: [Classification] = []
     var errors: [String] = []
 }
 
@@ -108,6 +109,46 @@ struct Dictation: Codable {
     var samples: Int
     var db: Float
     var verdict: String
+    var classification: Classification?
+}
+
+/// How one recording is judged by the old fixed -45 dBFS rule and by `SpeechRule`. Numbers only.
+struct Classification: Codable {
+    var label = ""
+    var seconds = 0.0
+    var rmsDB: Float = -120
+    var oldVoicedSeconds = 0.0
+    var oldVerdict = ""
+    var noiseFloorDB: Float?
+    var thresholdDB: Float = 0
+    var voicedSeconds = 0.0
+    var speechDB: Float = -120
+    var verdict = ""
+    var uploadGainDB: Float = 0
+    /// The dictation path would upload it: verdict is speech and the prepared segment is not silent.
+    var uploads = false
+    var uploadedSpeechDB: Float?
+
+    init(label: String, samples: [Float], heldSeconds: Double) {
+        self.label = label
+        seconds = (Double(samples.count) / AudioMath.sampleRate * 10).rounded() / 10
+        rmsDB = AudioMath.dbfs(AudioMath.rms(samples[...])).rounded()
+        oldVoicedSeconds = (AudioMath.voicedSeconds(samples, thresholdDB: -45) * 100).rounded() / 100
+        let length = Double(samples.count) / AudioMath.sampleRate
+        if length < 0.5 { oldVerdict = heldSeconds >= 1 ? "noAudio" : "tooShort" }
+        else if length >= 1, MicHealthMonitor.isDigitallySilent(samples) { oldVerdict = "digitalSilence" }
+        else { oldVerdict = oldVoicedSeconds < 0.25 ? "noSpeech" : "speech" }
+        let a = SpeechRule.analyze(samples)
+        noiseFloorDB = a.noiseFloorDB.map { $0.rounded() }
+        thresholdDB = a.thresholdDB.rounded()
+        voicedSeconds = (a.voicedSeconds * 100).rounded() / 100
+        speechDB = a.speechDB.rounded()
+        verdict = "\(AudioMath.captureVerdict(samples, heldSeconds: heldSeconds))"
+        uploadGainDB = SpeechRule.uploadGainDB(a).rounded()
+        let prepared = SpeechRule.prepareForUpload(samples)
+        uploads = verdict == "speech" && !AudioMath.isSilent(prepared)
+        if uploads { uploadedSpeechDB = SpeechRule.analyze(prepared).speechDB.rounded() }
+    }
 }
 
 struct MeetingResult: Codable {
@@ -153,6 +194,7 @@ final class Runner {
             ("g-meeting-first-then-call-app", { await self.withCallApp(callFirst: false) }),
             ("h-capture-methods", { await self.captureMethods() }),
             ("i-devices-under-call", { await self.devicesUnderCall() }),
+            ("j-quiet-speech-classification", { await self.quietSpeech() }),
         ]
         for (name, body) in all where only.map({ name.hasPrefix($0) }) ?? true {
             scenario = Scenario(name: name)
@@ -303,7 +345,8 @@ final class Runner {
         let verdict = AudioMath.captureVerdict(samples, heldSeconds: held)
         scenario.dictations.append(Dictation(startedAt: (startedAt.timeIntervalSince(clock) * 10).rounded() / 10,
                                              heldSeconds: (held * 10).rounded() / 10, samples: samples.count,
-                                             db: AudioMath.dbfs(AudioMath.rms(samples[...])).rounded(), verdict: "\(verdict)"))
+                                             db: AudioMath.dbfs(AudioMath.rms(samples[...])).rounded(), verdict: "\(verdict)",
+                                             classification: Classification(label: underCall ? "call" : "normal", samples: samples, heldSeconds: held)))
         let acceptable: Set<String> = underCall ? ["\(CaptureVerdict.speech)", "\(CaptureVerdict.noSpeech)"] : ["\(CaptureVerdict.speech)"]
         if !acceptable.contains("\(verdict)") { fail("dictation verdict \(verdict) with \(samples.count) samples over \(held) s") }
     }
@@ -641,6 +684,61 @@ struct DeviceInfo: Codable {
         var sz = UInt32(4)
         AudioObjectGetPropertyData(id, &a, 0, nil, &sz, &v)
         return v
+    }
+}
+
+extension Runner {
+    /// Real recordings through this Mac's microphone, judged by the old and new speech rules: the room, speech from
+    /// the speakers, the same speech made 10 to 25 dB quieter (a voice-processing call is about 10 dB down), and both
+    /// again while the call stand-in holds the microphone.
+    fileprivate func quietSpeech() async {
+        func capture(seconds: Double, speaking: Bool) async -> [Float] {
+            if speaking {
+                voice.start()
+                try? await Task.sleep(for: .seconds(1.5))
+            }
+            let mic = AudioRecorder()
+            do { try mic.start(deviceUID: nil) } catch { scenario.errors.append("\(error)"); return [] }
+            try? await Task.sleep(for: .seconds(seconds))
+            let samples = mic.stop()
+            voice.stop()
+            try? await Task.sleep(for: .seconds(1))
+            return samples
+        }
+        func judge(_ label: String, _ samples: [Float]) -> Classification {
+            let c = Classification(label: label, samples: samples, heldSeconds: Double(samples.count) / AudioMath.sampleRate)
+            scenario.classifications.append(c)
+            return c
+        }
+        let room = await capture(seconds: 5, speaking: false)
+        let speech = await capture(seconds: 6, speaking: true)
+        event("recorded room and speech")
+        if judge("room", room).verdict != "noSpeech" { fail("room noise was judged speech") }
+        if judge("room-10dB", Self.attenuate(room, by: 10)).verdict != "noSpeech" { fail("quiet room noise was judged speech") }
+        if !judge("speech", speech).uploads { fail("speech was not uploaded") }
+        for drop: Float in [10, 15, 20, 25] {
+            let c = judge("speech-\(Int(drop))dB", Self.attenuate(speech, by: drop))
+            if drop <= 15, !c.uploads { fail("speech \(Int(drop)) dB down was not uploaded") }
+        }
+
+        let out = FileManager.default.temporaryDirectory.appending(path: "voiceflow-callsim-\(UUID().uuidString).json")
+        let call = Process()
+        call.executableURL = Bundle.main.executableURL
+        call.arguments = ["--audio-callsim", "40", out.path]
+        do { try call.run(); event("call app started") } catch { scenario.errors.append("\(error)"); return }
+        try? await Task.sleep(for: .seconds(3))
+        let callRoom = await capture(seconds: 5, speaking: false)
+        let callSpeech = await capture(seconds: 6, speaking: true)
+        call.terminate()
+        call.waitUntilExit()
+        try? FileManager.default.removeItem(at: out)
+        if judge("call-room", callRoom).verdict != "noSpeech" { fail("room noise under the call was judged speech") }
+        _ = judge("call-speech", callSpeech)
+    }
+
+    static func attenuate(_ samples: [Float], by db: Float) -> [Float] {
+        let g = Float(pow(10, Double(-db) / 20))
+        return samples.map { $0 * g }
     }
 }
 
