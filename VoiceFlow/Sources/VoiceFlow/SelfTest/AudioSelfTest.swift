@@ -742,7 +742,10 @@ private final class SpeechPlayer {
         guard active else { return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        p.arguments = ["-v", "Samantha", Self.lines[index % Self.lines.count]]
+        // One long paragraph per process: starting a new `say` can take seconds on a busy Mac, which left
+        // dictation windows with nothing playing.
+        let paragraph = (0..<3).map { Self.lines[($0 + index) % Self.lines.count] }.joined(separator: " ")
+        p.arguments = ["-v", "Samantha", paragraph]
         index += 1
         p.terminationHandler = { [weak self] _ in
             Task { @MainActor in self?.speakNext() }
