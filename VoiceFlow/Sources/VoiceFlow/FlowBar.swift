@@ -180,8 +180,8 @@ final class FlowBarController {
         toastMeasure.sizingOptions = []
         barHost = ClickThroughHostingView(rootView: FlowBarView(state: state, report: { [weak self] frame in
             self?.barLaidOut(frame)
-        }, drag: { [weak self] ended in
-            self?.pointerDragged(to: NSEvent.mouseLocation, ended: ended) ?? false
+        }, drag: { [weak self] ended, moved in
+            self?.pointerDragged(to: NSEvent.mouseLocation, ended: ended, alreadyMoved: moved) ?? false
         }))
         barHost.sizingOptions = []
         barPanel.contentView = barHost
@@ -359,14 +359,17 @@ final class FlowBarController {
     // MARK: Dragging
 
     /// Follows a press on the bar. `pointer` is in screen points, so the moving window doesn't skew it.
+    /// `alreadyMoved` is how far the pointer had gone (screen points, y up) when the gesture first reported,
+    /// since a drag only starts after a few points; it is read on that first report only.
     /// Returns true when the press ended as a drag, false when it was a click (or dragging is off).
     @discardableResult
-    func pointerDragged(to pointer: CGPoint, ended: Bool) -> Bool {
+    func pointerDragged(to pointer: CGPoint, ended: Bool, alreadyMoved: CGSize = .zero) -> Bool {
         guard state.draggable, barPanel.isVisible, let current = centre else {
             drag = nil
             return false
         }
-        var press = drag ?? (pointer, current, false)
+        let pressedAt = CGPoint(x: pointer.x - alreadyMoved.width, y: pointer.y - alreadyMoved.height)
+        var press = drag ?? (pressedAt, current, false)
         if !press.moving, hypot(pointer.x - press.pointer.x, pointer.y - press.pointer.y) >= Self.dragThreshold {
             press.moving = true
         }
@@ -457,8 +460,9 @@ struct FlowBarView: View {
     @Bindable var state: PillState
     /// The drawn bar's frame in the window, origin top left; nil when nothing is drawn.
     var report: @MainActor (CGRect?) -> Void = { _ in }
-    /// A press on the bar moved (false) or ended (true). Returns true once the press has become a drag.
-    var drag: @MainActor (Bool) -> Bool = { _ in false }
+    /// A press on the bar moved (false) or ended (true), with how far it has moved in screen points (y up).
+    /// Returns true once the press has become a drag.
+    var drag: @MainActor (Bool, CGSize) -> Bool = { _, _ in false }
 
     var body: some View {
         ZStack {
@@ -509,8 +513,10 @@ struct FlowBarView: View {
     /// With `tap`, a press that never moves counts as a click instead.
     private func move(tap: (@MainActor () -> Void)? = nil) -> some Gesture {
         DragGesture(minimumDistance: tap == nil ? FlowBarController.dragThreshold : 0, coordinateSpace: .global)
-            .onChanged { _ in _ = drag(false) }
-            .onEnded { _ in if !drag(true) { tap?() } }
+            .onChanged { value in _ = drag(false, CGSize(width: value.translation.width, height: -value.translation.height)) }
+            .onEnded { value in
+                if !drag(true, CGSize(width: value.translation.width, height: -value.translation.height)) { tap?() }
+            }
     }
 
     @ViewBuilder private var positionMenu: some View {

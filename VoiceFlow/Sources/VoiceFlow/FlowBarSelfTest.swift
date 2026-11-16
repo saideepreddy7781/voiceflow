@@ -97,6 +97,10 @@ private struct Report: Codable {
     var postedEventsMoveThePointer = false
     var screenCapturePreflight = false
     var screenLocked = false
+    /// Time for each routing probe to show the expected window: the hit test's latency on this Mac.
+    var routingLatencyMs: [Int] = []
+    /// Posted events not sent because something other than a test window was under the point.
+    var skippedForSafety: [String] = []
     var phases: [PhaseReport] = []
     var drag: [DragCheck] = []
     var nonActivating: [Probe] = []
@@ -156,6 +160,7 @@ private final class Runner {
     var taps: [String] = []
     var finished = false
     let originalPointer = NSEvent.mouseLocation
+    let previousApp = NSWorkspace.shared.frontmostApplication
     var pointerMoved = false
     var display: DisplayArea!
     var testCentre = CGPoint.zero
@@ -183,13 +188,10 @@ private final class Runner {
         report.arrangement = FlowBarController.arrangement(displays)
         report.postEventPreflight = CGPreflightPostEventAccess()
         report.screenCapturePreflight = CGPreflightScreenCaptureAccess()
-        // The lock screen covers every window, so nothing here can be checked until it's unlocked.
+        // The lock screen covers every window. Routing is then asked for beneath the lock screen's own windows,
+        // and each probe says so; region screenshots and posted events can't work until it's unlocked.
         let session = CGSessionCopyCurrentDictionary() as? [String: Any]
         report.screenLocked = (session?["CGSSessionScreenIsLocked"] as? Bool) ?? false
-        if report.screenLocked {
-            fail("the screen is locked; unlock it and run the test again")
-            return
-        }
 
         // Away from the bottom centre, where a running VoiceFlow may show its own bar, and clear of any other
         // app's window that floats above ordinary windows (an alert, a palette).
@@ -319,12 +321,8 @@ private final class Runner {
         controller.pointerOverride = nil
         await pause(300)
 
-        // 2. Pixels: nothing drawn at the window's edge or away from the shape.
-        phase.pixels.append(viewRender(name, bar: bar))
-        phase.pixels.append(await windowCapture(name, bar: bar))
-        phase.regionShot = await regionShot(name, around: shapes.map(\.1.rect))
-
-        // 3. Real synthetic events, when this Mac lets the test post them.
+        // 2. Real synthetic events, when this Mac lets the test post them. Each one is posted only after
+        //    checking that a test window is what's under the point, so nothing lands in another app.
         if report.postedEventsMoveThePointer {
             for (index, (label, point)) in outside.enumerated() {
                 phase.syntheticEvents.append(await click(label, point, expectBackdrop: true, tap: nil))
@@ -339,6 +337,15 @@ private final class Runner {
         } else {
             phase.notes.append("synthetic events skipped: this process may not post events")
         }
+
+        // 3. Pixels: nothing drawn at the window's edge or away from the shape. Captured last, so a capture
+        //    prompt from macOS can never sit under the synthetic clicks above.
+        // Let a hover animation finish, then measure against the shape drawn now.
+        await pause(400)
+        let settled = controller.barShape ?? bar
+        phase.pixels.append(viewRender(name, bar: settled))
+        phase.pixels.append(await windowCapture(name, bar: settled))
+        phase.regionShot = await regionShot(name, around: shapes.map(\.1.rect))
 
         for probe in phase.windowServerRouting + phase.syntheticEvents where !probe.pass {
             fail("\(name): \(probe.label): expected \(probe.expected), got \(probe.got)")
@@ -375,6 +382,12 @@ private final class Runner {
         }
     }
 
+    private func isLockScreen(_ number: Int) -> Bool {
+        guard report.screenLocked else { return false }
+        let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(number)) as? [[String: Any]])?.first
+        return info?[kCGWindowOwnerName as String] as? String == "loginwindow"
+    }
+
     private func owner(of number: Int) -> String {
         let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(number)) as? [[String: Any]])?.first
         return "\(info?[kCGWindowOwnerName as String] as? String ?? "?") #\(number), level \(info?[kCGWindowLayer as String] as? Int ?? 0)"
@@ -382,10 +395,23 @@ private final class Runner {
 
     private func route(_ label: String, _ point: CGPoint, expect window: NSWindow) async -> Probe {
         controller.pointerOverride = point
-        await pause(30)
-        let got = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
-        return Probe(label: label, x: point.x, y: point.y, expected: name(of: window.windowNumber), got: name(of: got),
-                     pass: got == window.windowNumber)
+        // The window server applies a window's change to `ignoresMouseEvents` on its own schedule: poll briefly
+        // and report how long it took.
+        let started = Date()
+        var got = 0
+        var note = ""
+        repeat {
+            await pause(10)
+            got = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+            for _ in 0..<4 where isLockScreen(got) {
+                got = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: got)
+                note = " (beneath the lock screen)"
+            }
+        } while got != window.windowNumber && Date().timeIntervalSince(started) < 0.5
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
+        report.routingLatencyMs.append(ms)
+        return Probe(label: label, x: point.x, y: point.y, expected: name(of: window.windowNumber),
+                     got: name(of: got) + note + " after \(ms) ms", pass: got == window.windowNumber)
     }
 
     // MARK: Synthetic events
@@ -409,11 +435,24 @@ private final class Runner {
         report.postedEventsMoveThePointer = abs(now.x - target.x) < 2 && abs(now.y - target.y) < 2
     }
 
+    /// True when one of this test's windows is the topmost window at `point`. Checked before every posted
+    /// press, so a click can never land on another app's window or a system alert.
+    private func safe(_ point: CGPoint, _ label: String) -> Bool {
+        let top = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+        let ours = [backdrop.windowNumber, controller.barPanel.windowNumber, controller.toastPanel.windowNumber]
+        if ours.contains(top) { return true }
+        report.skippedForSafety.append("\(label): \(owner(of: top)) was on top")
+        return false
+    }
+
     private func click(_ label: String, _ point: CGPoint, expectBackdrop: Bool, tap: String?) async -> Probe {
         let before = backdropView.hits.count
         let tapsBefore = taps.count
         post(.mouseMoved, point)
         await pause(90)
+        guard safe(point, "click \(label)") else {
+            return Probe(label: "click \(label)", x: point.x, y: point.y, expected: "a test window on top", got: "another window; not clicked", pass: false)
+        }
         post(.leftMouseDown, point)
         await pause(40)
         post(.leftMouseUp, point)
@@ -433,6 +472,9 @@ private final class Runner {
         let before = backdropView.hits.count
         post(.mouseMoved, point)
         await pause(90)
+        guard safe(point, "scroll \(label)") else {
+            return Probe(label: "scroll \(label)", x: point.x, y: point.y, expected: "a test window on top", got: "another window; not scrolled", pass: false)
+        }
         let source = CGEventSource(stateID: .hidSystemState)
         CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: -2, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
         await pause(160)
@@ -462,13 +504,15 @@ private final class Runner {
         guard report.postedEventsMoveThePointer, let bar = controller.barShape else { return }
         state.dismissMessage()
         await pause(300)
-        NSApp.deactivate()
-        await pause(400)
+        // Give the focus back to the app that was in front before the test; the click must not take it.
+        (previousApp ?? NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first)?.activate()
+        await pause(600)
         let wasActive = NSApp.isActive
         let point = CGPoint(x: bar.rect.maxX - 16, y: bar.rect.midY)
         let tapsBefore = taps.count
         post(.mouseMoved, point)
         await pause(90)
+        guard safe(point, "non-activating check") else { return }
         post(.leftMouseDown, point)
         await pause(40)
         post(.leftMouseUp, point)
@@ -478,8 +522,12 @@ private final class Runner {
         report.nonActivating.append(Probe(label: "finish button while another app is active", x: point.x, y: point.y,
                                           expected: "action runs, VoiceFlow stays inactive",
                                           got: "action \(tapped ? "runs" : "missing"), VoiceFlow \(NSApp.isActive ? "became active" : "stays inactive")\(wasActive ? " (was active before the click)" : "")",
-                                          pass: ok || (wasActive && tapped && !controller.barPanel.isKeyWindow)))
-        if let probe = report.nonActivating.last, !probe.pass { fail("non-activating: \(probe.got)") }
+                                          pass: ok))
+        if wasActive {
+            report.nonActivating[report.nonActivating.count - 1].got += "; inconclusive, another app could not be put in front"
+        } else if let probe = report.nonActivating.last, !probe.pass {
+            fail("non-activating: \(probe.got)")
+        }
     }
 
     // MARK: Drag
@@ -564,6 +612,7 @@ private final class Runner {
                 let by = CGPoint(x: -140, y: -70)
                 post(.mouseMoved, from)
                 await pause(120)
+                guard safe(from, "posted drag") else { return }
                 post(.leftMouseDown, from)
                 await pause(60)
                 for i in 1...12 {
@@ -719,6 +768,8 @@ private final class Runner {
         controller?.layout()
         backdrop?.orderOut(nil)
         backdrop?.close()
+        // Clicking the test window brought this process forward; hand the focus back.
+        if NSApp.isActive, let previousApp, previousApp != NSRunningApplication.current { previousApp.activate() }
         if pointerMoved {
             CGWarpMouseCursorPosition(cg(originalPointer))
             CGAssociateMouseAndMouseCursorPosition(1)
