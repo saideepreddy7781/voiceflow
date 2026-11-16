@@ -71,7 +71,7 @@ internal sealed class WindowsApp
         _services = new AppServices(_model, _dictation, _notetaker, _bar, _inserter, topLevel: () => _main);
         _updates = (UpdateService)_services.Updates;
         _shell = new ShellViewModel(_services) { OnRunSetup = () => RunOnboarding(_main) };
-        _barHost = new FlowBarHost(_bar, new FlowBarViewModel(_services));
+        _barHost = new FlowBarHost(_bar, new FlowBarViewModel(_services), _services.Preferences);
         _meetingWatcher = new MeetingWatcher(_model, _dictation, _notetaker, _bar);
 
         _dictation.ResetHotkeySession = notify => _hotkeys.ResetSession(notify);

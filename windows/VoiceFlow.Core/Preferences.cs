@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using VoiceFlow.Core.FlowBar;
 using VoiceFlow.Core.Library;
 using VoiceFlow.Core.Meetings;
 using VoiceFlow.Core.Speech;
@@ -165,6 +166,10 @@ public sealed class Preferences : IEquatable<Preferences>
 
     // System
     public bool ShowBarWhenIdle { get; set; } = false;
+    /// <summary>Where the user dragged the Flow bar, one entry per arrangement of displays. Empty: bottom centre.</summary>
+    public List<BarPosition> FlowBarPositions { get; set; } = [];
+    /// <summary>Stops the Flow bar from being dragged.</summary>
+    public bool FlowBarLocked { get; set; }
     /// <summary>0 keeps no history; -1 keeps it forever.</summary>
     public int HistoryRetentionDays { get; set; } = 30;
     public bool LaunchAtLogin { get; set; }
@@ -226,6 +231,8 @@ public sealed class Preferences : IEquatable<Preferences>
             ["meetingsNotesLanguage"] = EnumText.Raw(MeetingsNotesLanguage),
             ["meetingsConsentReminder"] = MeetingsConsentReminder,
             ["showBarWhenIdle"] = ShowBarWhenIdle,
+            ["flowBarPositions"] = new JsonArray(FlowBarPositions.Select(b => (JsonNode?)new JsonObject { ["layout"] = b.Layout, ["x"] = b.X, ["y"] = b.Y }).ToArray()),
+            ["flowBarLocked"] = FlowBarLocked,
             ["historyRetentionDays"] = HistoryRetentionDays,
             ["launchAtLogin"] = LaunchAtLogin,
             ["checkForUpdates"] = CheckForUpdates,
@@ -297,6 +304,17 @@ public sealed class Preferences : IEquatable<Preferences>
         E<NotesLanguage>("meetingsNotesLanguage", v => p.MeetingsNotesLanguage = v);
         p.MeetingsConsentReminder = Bool(o, "meetingsConsentReminder") ?? p.MeetingsConsentReminder;
         p.ShowBarWhenIdle = Bool(o, "showBarWhenIdle") ?? p.ShowBarWhenIdle;
+        if (o["flowBarPositions"] is JsonArray positions)
+        {
+            var read = new List<BarPosition>();
+            foreach (var item in positions.OfType<JsonObject>())
+            {
+                if (Str(item, "layout") is { Length: > 0 } layout && Int(item, "x") is { } x && Int(item, "y") is { } y)
+                    read = BarPlacement.Remember(read, layout, new PxPoint(x, y));
+            }
+            p.FlowBarPositions = read;
+        }
+        p.FlowBarLocked = Bool(o, "flowBarLocked") ?? p.FlowBarLocked;
         p.HistoryRetentionDays = Int(o, "historyRetentionDays") ?? p.HistoryRetentionDays;
         p.LaunchAtLogin = Bool(o, "launchAtLogin") ?? p.LaunchAtLogin;
         p.CheckForUpdates = Bool(o, "checkForUpdates") ?? p.CheckForUpdates;

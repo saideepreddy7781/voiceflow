@@ -337,7 +337,16 @@ public sealed partial class SystemSettings : ObservableObject
 {
     readonly IAppServices _services;
 
-    public SystemSettings(IAppServices services) => _services = services;
+    public SystemSettings(IAppServices services)
+    {
+        _services = services;
+        // The bar can be dragged or reset from its own menu while this page is open.
+        services.Preferences.Changed += (_, _) =>
+        {
+            OnPropertyChanged(nameof(LockBarPosition));
+            ResetBarPositionCommand.NotifyCanExecuteChanged();
+        };
+    }
 
     Preferences Prefs => _services.Preferences.Current;
 
@@ -352,6 +361,17 @@ public sealed partial class SystemSettings : ObservableObject
         get => Prefs.ShowBarWhenIdle;
         set { _services.Preferences.Update(p => p.ShowBarWhenIdle = value); OnPropertyChanged(); }
     }
+
+    public bool LockBarPosition
+    {
+        get => Prefs.FlowBarLocked;
+        set { _services.Preferences.Update(p => p.FlowBarLocked = value); OnPropertyChanged(); }
+    }
+
+    bool CanResetBarPosition => Prefs.FlowBarPositions.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanResetBarPosition))]
+    void ResetBarPosition() => _services.Preferences.Update(p => p.FlowBarPositions = []);
 
     public bool PlaySounds
     {

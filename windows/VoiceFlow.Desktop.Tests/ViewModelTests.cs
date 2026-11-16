@@ -308,10 +308,54 @@ public class ViewModelTests
     [Fact]
     public void FlowBarSitsAtBottomCentreOfTheWorkArea()
     {
-        var work = new Avalonia.PixelRect(1920, 0, 2560, 1400);
-        var position = Views.FlowBarWindow.BottomCentre(work, new Avalonia.PixelSize(200, 80), 1.5);
-        Assert.Equal(1920 + (2560 - 200) / 2, position.X);
-        Assert.Equal(1400 - 80 - 9, position.Y);   // margin 6 at 150%
+        var work = new Core.FlowBar.PxRect(1920, 0, 2560, 1400);
+        var centre = Core.FlowBar.BarPlacement.Home(work, new Core.FlowBar.PxSize(200, 48), 1.5);
+        Assert.Equal(1920 + 2560 / 2, centre.X);
+        Assert.Equal(1400 - 21 - 48 + 24, centre.Y);   // a 14-pixel gap at 150%
+    }
+
+    [Fact]
+    public void FlowBarMenuResetsAndLocksThePosition()
+    {
+        var services = Services();
+        var bar = new FlowBarViewModel(services, runClock: false);
+        Assert.False(bar.ShowMenu);
+        bar.ToggleMenuCommand.Execute(null);
+        Assert.True(bar.ShowMenu);
+        Assert.False(bar.ResetPositionCommand.CanExecute(null));   // already at the bottom centre
+        Assert.Equal("Drag to move", bar.MenuHint);
+
+        services.Preferences.Update(p => p.FlowBarPositions = [new("0,0,1920,1080", 300, 400)]);
+        Assert.True(bar.ResetPositionCommand.CanExecute(null));
+        bar.ResetPositionCommand.Execute(null);
+        Assert.Empty(services.Preferences.Current.FlowBarPositions);
+        Assert.False(bar.ShowMenu);
+
+        bar.ShowMenu = true;
+        Assert.Equal("Lock", bar.LockTitle);
+        bar.ToggleLockCommand.Execute(null);
+        Assert.True(services.Preferences.Current.FlowBarLocked);
+        Assert.Equal("Unlock", bar.LockTitle);
+        Assert.Equal("Position locked", bar.MenuHint);
+        Assert.False(bar.ShowMenu);
+    }
+
+    [Fact]
+    public void SettingsResetTheFlowBarPositionAndLockIt()
+    {
+        var services = Services();
+        var system = new SystemSettings(services);
+        Assert.False(system.ResetBarPositionCommand.CanExecute(null));
+        var changes = new List<string?>();
+        system.PropertyChanged += (_, e) => changes.Add(e.PropertyName);
+        // Dragging the bar while Settings is open enables the button.
+        services.Preferences.Update(p => p.FlowBarPositions = [new("0,0,1920,1080", 300, 400)]);
+        Assert.True(system.ResetBarPositionCommand.CanExecute(null));
+        system.ResetBarPositionCommand.Execute(null);
+        Assert.Empty(services.Preferences.Current.FlowBarPositions);
+        system.LockBarPosition = true;
+        Assert.True(services.Preferences.Current.FlowBarLocked);
+        Assert.Contains(nameof(SystemSettings.LockBarPosition), changes);
     }
 
     [Fact]

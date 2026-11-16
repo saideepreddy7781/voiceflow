@@ -2,15 +2,18 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VoiceFlow.Core;
 using VoiceFlow.Core.AI;
 using VoiceFlow.Core.Audio;
 using VoiceFlow.Core.Diagnostics;
+using VoiceFlow.Core.FlowBar;
 using VoiceFlow.Core.Input;
 using VoiceFlow.Core.Library;
 using VoiceFlow.Core.Speech;
@@ -93,7 +96,7 @@ internal static class SelfTest
                 Check("resources", ResourcesCheck);
                 Check("tray-icon", TrayIconCheck);
                 Check("flow-bar-window", () => FlowBarWindowCheck(temp));
-                Check("flow-bar-paint", () => FlowBarPaintCheck(temp));
+                FlowBarScreenChecks(temp);
                 Check("dictation-bar-reset", () => DictationBarResetCheck(temp));
                 Check("ui", () => UiCheck(temp));
             }
@@ -544,21 +547,24 @@ internal static class SelfTest
         return (model, hub, dictation, notetaker, bar, new AppServices(model, dictation, notetaker, bar, inserter, hub), owner);
     }
 
-    /// <summary>The real Flow bar window: its native styles, and that it appears only when there is something to show.</summary>
+    /// <summary>
+    /// The real Flow bar window: its native styles, its shape, and that it appears only when there is something to
+    /// show. None of this needs an interactive desktop.
+    /// </summary>
     static string FlowBarWindowCheck(string temp)
     {
         var (_, hub, dictation, notetaker, bar, services, owner) = Compose(Path.Combine(temp, "bar"));
         using (hub) using (dictation) using (notetaker) using (bar) using (owner)
-        using (var host = new FlowBarHost(bar, new FlowBarViewModel(services, runClock: false)))
+        using (var host = new FlowBarHost(bar, new FlowBarViewModel(services, runClock: false), services.Preferences))
         {
             Assert(host.Handle != IntPtr.Zero, "the Flow bar has no native handle");
             var style = GetWindowLongPtrW(host.Handle, GWL_EXSTYLE).ToInt64();
             Assert((style & WS_EX_NOACTIVATE) != 0, "WS_EX_NOACTIVATE is not set");
             Assert((style & WS_EX_TOOLWINDOW) != 0, "WS_EX_TOOLWINDOW is not set");
-            Assert((style & WS_EX_TRANSPARENT) != 0, "the bar is not click-through at rest");
+            Assert((style & WS_EX_LAYERED) != 0, "WS_EX_LAYERED is not set");
             Assert(!IsWindowVisible(host.Handle), "the bar is on screen while idle");
             bar.Show("Self-test", seconds: 30);
-            PumpFor(TimeSpan.FromMilliseconds(200));
+            PumpFor(TimeSpan.FromMilliseconds(250));
             Assert(IsWindowVisible(host.Handle), "a toast did not show the bar");
             Assert((GetWindowLongPtrW(host.Handle, GWL_EXSTYLE).ToInt64() & WS_EX_NOACTIVATE) != 0, "showing the bar dropped WS_EX_NOACTIVATE");
 
@@ -570,58 +576,433 @@ internal static class SelfTest
             host.Window.CanResize = false;
             PumpFor(TimeSpan.FromMilliseconds(50));
             var rebuilt = GetWindowLongPtrW(host.Handle, GWL_EXSTYLE).ToInt64();
-            Assert((rebuilt & WS_EX_NOACTIVATE) != 0 && (rebuilt & WS_EX_LAYERED) != 0 && (rebuilt & WS_EX_TRANSPARENT) != 0, $"Avalonia's style update dropped the bar's flags (0x{rebuilt:X8})");
+            Assert((rebuilt & WS_EX_NOACTIVATE) != 0 && (rebuilt & WS_EX_LAYERED) != 0, $"Avalonia's style update dropped the bar's flags (0x{rebuilt:X8})");
+
+            // The window region and WM_NCHITTEST both follow the toast's rounded outline.
+            Assert(host.Parts.Count == 1, $"expected the toast as the only visible part, found {host.Parts.Count}");
+            var toast = host.Parts[0];
+            Assert(GetWindowRect(host.Handle, out var frame), "no window rectangle");
+            var region = CreateRectRgn(0, 0, 0, 0);
+            try
+            {
+                var kind = GetWindowRgn(host.Handle, region);
+                Assert(kind != ERROR_REGION && kind != NULLREGION, $"the bar has no window region (GetWindowRgn returned {kind})");
+                Assert(!PtInRegion(region, 0, 0), "the window region covers the window's corner, outside the toast");
+                Assert(PtInRegion(region, (int)toast.X + (int)(toast.Width / 2), (int)toast.Y + (int)(toast.Height / 2)), "the window region misses the toast");
+            }
+            finally { DeleteObject(region); }
+            var origin = new POINT();
+            ClientToScreen(host.Handle, ref origin);
+            var corner = HitTestAt(host.Handle, frame.Left, frame.Top);
+            var middle = HitTestAt(host.Handle, origin.X + (int)(toast.X + toast.Width / 2), origin.Y + (int)(toast.Y + toast.Height / 2));
+            Assert(corner == HTTRANSPARENT, $"WM_NCHITTEST at the window's corner returned {corner}, expected HTTRANSPARENT");
+            Assert(middle != HTTRANSPARENT, "WM_NCHITTEST on the toast returned HTTRANSPARENT");
 
             bar.DismissToast();
             PumpFor(TimeSpan.FromMilliseconds(100));
             Assert(!IsWindowVisible(host.Handle), "the bar stayed on screen after its toast");
-            return $"extended styles 0x{style:X8}; hidden at rest, shown by a toast, refuses focus, keeps its flags, hidden again";
+            return $"extended styles 0x{style:X8}; hidden at rest, shown by a toast, refuses focus, keeps its flags, region and hit test follow the toast's outline, hidden again";
         }
     }
 
+    static int HitTestAt(IntPtr hwnd, int x, int y) =>
+        (int)SendMessageW(hwnd, WM_NCHITTEST, IntPtr.Zero, new IntPtr((y << 16) | (x & 0xFFFF))).ToInt64();
+
     /// <summary>
-    /// The bar is layered on top of Avalonia's composition surface: this reads the real screen to see that it paints.
-    /// A runner with no composited desktop can't show that either way, so it skips instead of failing.
+    /// The Flow bar over another window, with real mouse input: it must paint its shape and nothing else, pass
+    /// clicks outside the shape to the window behind, take clicks on its buttons without taking the focus, and
+    /// remember where it was dragged. Needs an interactive desktop; a runner without one skips.
     /// </summary>
-    static string FlowBarPaintCheck(string temp)
+    static void FlowBarScreenChecks(string temp)
     {
-        if (!HasInteractiveDesktop()) throw new SkipException("no interactive desktop");
-        var (_, hub, dictation, notetaker, bar, services, owner) = Compose(Path.Combine(temp, "paint"));
-        using (hub) using (dictation) using (notetaker) using (bar) using (owner)
-        using (var host = new FlowBarHost(bar, new FlowBarViewModel(services, runClock: false)))
+        var names = new[] { "flow-bar-paint", "flow-bar-click-through", "flow-bar-button", "flow-bar-drag" };
+        if (!HasInteractiveDesktop())
         {
-            bar.Show("Self-test", seconds: 30);
-            PumpFor(TimeSpan.FromMilliseconds(500));
-            var scale = host.Window.RenderScaling;
-            var position = host.Window.Position;
-            var width = (int)Math.Max(1, host.Window.ClientSize.Width * scale);
-            // The toast is the first thing below the window's 16-pixel top padding; its fill is #161616.
-            var row = position.Y + (int)(30 * scale);
-            var screen = GetDC(IntPtr.Zero);
-            var memory = CreateCompatibleDC(screen);
-            var bitmap = CreateCompatibleBitmap(screen, width, 1);
-            var previous = SelectObject(memory, bitmap);
+            foreach (var name in names) Emit($"SKIP {name}: no interactive desktop");
+            return;
+        }
+        BarStage stage;
+        try { stage = new BarStage(Path.Combine(temp, "stage")); }
+        catch (Exception e)
+        {
+            foreach (var name in names)
+            {
+                _failures++;
+                Emit($"FAIL {name}: setting up the bar over a test window failed: {e.GetType().Name}: {e.Message}");
+            }
+            return;
+        }
+        GetCursorPos(out var cursor);
+        try
+        {
+            Check("flow-bar-paint", stage.Paint);
+            Check("flow-bar-click-through", stage.ClickThrough);
+            Check("flow-bar-button", stage.ButtonClick);
+            Check("flow-bar-drag", stage.Drag);
+        }
+        finally
+        {
+            stage.Dispose();
+            SetCursorPos(cursor.X, cursor.Y);
+        }
+    }
+
+    /// <summary>The hands-free bar with a toast above it, in front of a plain window on another thread.</summary>
+    sealed class BarStage : IDisposable
+    {
+        readonly SharedMicrophone _hub;
+        readonly DictationController _dictation;
+        readonly Notetaker _notetaker;
+        readonly FlowBarController _bar;
+        readonly MessageWindow _owner;
+        readonly AppServices _services;
+        readonly FlowBarHost _host;
+        readonly BehindWindow _behind;
+        readonly string _folder;
+        int _cancels;
+
+        public BarStage(string folder)
+        {
+            _folder = folder;
+            (_, _hub, _dictation, _notetaker, _bar, _services, _owner) = Compose(folder);
+            _bar.CancelRequested += () => _cancels++;
+            _host = new FlowBarHost(_bar, new FlowBarViewModel(_services, runClock: false), _services.Preferences);
+            _bar.Set(FlowPhase.HandsFree);
+            _bar.Show("Self-test toast", "It sits above the bar.", seconds: 120);
+            PumpFor(TimeSpan.FromMilliseconds(400));
+            Assert(IsWindowVisible(_host.Handle), "the bar did not show");
+            Assert(GetWindowRect(_host.Handle, out var frame), "no window rectangle");
+            // The window behind covers the bar's whole rectangle with room to spare, on its own thread like any other app.
+            _behind = new BehindWindow(new PxRect(frame.Left - 120, frame.Top - 120, frame.Right - frame.Left + 240, frame.Bottom - frame.Top + 240));
+            SetWindowPos(_host.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            Park();
+            PumpFor(TimeSpan.FromMilliseconds(300));
+        }
+
+        double Scale => _host.Window.RenderScaling;
+
+        POINT ClientOrigin()
+        {
+            var origin = new POINT();
+            ClientToScreen(_host.Handle, ref origin);
+            return origin;
+        }
+
+        /// <summary>The capsule's rectangle on screen.</summary>
+        (int X, int Y, int Width, int Height) Capsule()
+        {
+            var box = _host.Window.AnchorRect() ?? throw new InvalidOperationException("the capsule has not been laid out");
+            var o = ClientOrigin();
+            return (o.X + (int)Math.Round(box.X * Scale), o.Y + (int)Math.Round(box.Y * Scale), (int)Math.Round(box.Width * Scale), (int)Math.Round(box.Height * Scale));
+        }
+
+        bool InShape(int screenX, int screenY)
+        {
+            var o = ClientOrigin();
+            return BarShape.HitTest(_host.Parts, screenX - o.X, screenY - o.Y);
+        }
+
+        /// <summary>Points inside the bar's window rectangle but outside its shape: corners, the gap above the capsule, its rounded ends.</summary>
+        List<(string Name, int X, int Y)> OutsidePoints()
+        {
+            GetWindowRect(_host.Handle, out var frame);
+            var c = Capsule();
+            var inset = (int)Math.Ceiling(Scale);
+            var candidates = new List<(string, int, int)>
+            {
+                ("window corner", frame.Left + inset, frame.Top + inset),
+                ("window corner", frame.Right - 1 - inset, frame.Bottom - 1 - inset),
+                ("beside the capsule", c.X - 2 * inset, c.Y + c.Height / 2),
+                ("beside the capsule", c.X + c.Width + 2 * inset, c.Y + c.Height / 2),
+                ("rounded end of the capsule", c.X + inset, c.Y + inset),
+                ("gap between toast and capsule", c.X + c.Width / 2, c.Y - (int)Math.Round(3 * Scale)),
+            };
+            return candidates.Where(p => p.Item2 >= frame.Left && p.Item2 < frame.Right && p.Item3 >= frame.Top && p.Item3 < frame.Bottom && !InShape(p.Item2, p.Item3)).ToList();
+        }
+
+        /// <summary>Moves the pointer onto the window behind, away from the bar.</summary>
+        void Park()
+        {
+            SetCursorPos(_behind.Bounds.X + 20, _behind.Bounds.Y + 20);
+            PumpFor(TimeSpan.FromMilliseconds(60));
+        }
+
+        public string Paint()
+        {
+            Park();
+            var c = Capsule();
+            // Five device-independent pixels in from the capsule's left end is plain fill (#161616).
+            var fill = ReadPixel(c.X + (int)Math.Round(5 * Scale), c.Y + c.Height / 2);
+            if (!Near(fill, 0x16, 0x16, 0x16, 24)) throw new SkipException($"the capsule's fill was not on screen (read #{fill.R:X2}{fill.G:X2}{fill.B:X2}); headless desktop, or the bar did not paint");
+            var outside = OutsidePoints();
+            Assert(outside.Count >= 3, $"only {outside.Count} test points outside the shape");
+            foreach (var (name, x, y) in outside)
+            {
+                var color = ReadPixel(x, y);
+                Assert(Near(color, BehindWindow.Red, BehindWindow.Green, BehindWindow.Blue, 12),
+                       $"{name} at ({x}, {y}) shows #{color.R:X2}{color.G:X2}{color.B:X2}, not the window behind");
+            }
+            return $"capsule fill on screen; {outside.Count} points around it show the window behind unchanged";
+        }
+
+        public string ClickThrough()
+        {
+            var outside = OutsidePoints();
+            Assert(outside.Count >= 3, $"only {outside.Count} test points outside the shape");
+            foreach (var (name, x, y) in outside)
+            {
+                var before = _behind.Clicks;
+                if (!Click(x, y)) throw new SkipException($"SendInput was refused (error {Marshal.GetLastWin32Error()})");
+                var until = DateTime.UtcNow.AddSeconds(2);
+                while (_behind.Clicks == before && DateTime.UtcNow < until) PumpFor(TimeSpan.FromMilliseconds(10));
+                Assert(_behind.Clicks > before, $"a click on the {name} at ({x}, {y}) did not reach the window behind");
+                var at = _behind.LastClick;
+                Assert(Math.Abs(at.X - x) <= 1 && Math.Abs(at.Y - y) <= 1, $"the window behind got the click at ({at.X}, {at.Y}), expected ({x}, {y})");
+            }
+            var mode = _host.RegionHonoured switch { true => "window region", false => "cursor-driven WS_EX_TRANSPARENT fallback", null => "region not probed yet" };
+            return $"{outside.Count} clicks outside the shape reached a window on another thread ({mode})";
+        }
+
+        public string ButtonClick()
+        {
+            var button = _host.Window.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => AutomationProperties.GetName(b) == "Cancel dictation" && b.IsEffectivelyVisible)
+                ?? throw new InvalidOperationException("the hands-free bar has no Cancel button");
+            var centre = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), _host.Window) ?? throw new InvalidOperationException("the Cancel button is not in the window");
+            var o = ClientOrigin();
+            int x = o.X + (int)Math.Round(centre.X * Scale), y = o.Y + (int)Math.Round(centre.Y * Scale);
+            var foreground = GetForegroundWindow();
+            var behindClicks = _behind.Clicks;
+            var cancels = _cancels;
+            SetCursorPos(x, y);
+            PumpFor(TimeSpan.FromMilliseconds(120));   // the fallback, if it is in use, notices the pointer on its next tick
+            if (!Click(x, y)) throw new SkipException($"SendInput was refused (error {Marshal.GetLastWin32Error()})");
+            var until = DateTime.UtcNow.AddSeconds(2);
+            while (_cancels == cancels && DateTime.UtcNow < until) PumpFor(TimeSpan.FromMilliseconds(10));
+            Park();
+            Assert(_cancels > cancels, $"a click on the Cancel button at ({x}, {y}) did not reach the bar");
+            Assert(_behind.Clicks == behindClicks, "the click on the Cancel button also reached the window behind");
+            Assert(GetForegroundWindow() == foreground, "clicking the bar changed the foreground window");
+            Assert(GetForegroundWindow() != _host.Handle && GetFocus() != _host.Handle, "the bar took the focus");
+            return "the Cancel button got the click; the foreground window and the focus stayed where they were";
+        }
+
+        public string Drag()
+        {
+            var prefs = _services.Preferences;
+            Assert(prefs.Current.FlowBarPositions.Count == 0, "a position was saved before the drag");
+            var home = _host.Anchor ?? throw new InvalidOperationException("the bar was never placed");
+            Assert(GetWindowRect(_host.Handle, out var before), "no window rectangle");
+            var c = Capsule();
+            // The middle of the hands-free capsule is the level meter, not a button.
+            int startX = c.X + c.Width / 2, startY = c.Y + c.Height / 2;
+            var monitor = MonitorFromPoint(new POINT { X = startX, Y = startY }, MONITOR_DEFAULTTONEAREST);
+            var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+            GetMonitorInfoW(monitor, ref info);
+            var work = info.rcWork;
+            int dx = (int)Math.Round(160 * Scale), dy = -(int)Math.Round(180 * Scale);
+            if (startX - dx < work.Left + 2 * c.Width) dx = -dx;
+            if (startY + dy < work.Top + 4 * c.Height) throw new SkipException("the screen is too short to drag the bar upwards");
+            var foreground = GetForegroundWindow();
+            var cancels = _cancels;
+
+            SetCursorPos(startX, startY);
+            PumpFor(TimeSpan.FromMilliseconds(60));
+            if (!SendMouse(MOUSEEVENTF_LEFTDOWN)) throw new SkipException($"SendInput was refused (error {Marshal.GetLastWin32Error()})");
+            PumpFor(TimeSpan.FromMilliseconds(40));
+            const int steps = 12;
+            for (int i = 1; i <= steps; i++)
+            {
+                MoveTo(startX - dx * i / steps, startY + dy * i / steps);
+                PumpFor(TimeSpan.FromMilliseconds(16));
+            }
+            PumpFor(TimeSpan.FromMilliseconds(60));
+            GetCursorPos(out var end);
+            SendMouse(MOUSEEVENTF_LEFTUP);
+            PumpFor(TimeSpan.FromMilliseconds(150));
+            Park();
+
+            var saved = prefs.Current.FlowBarPositions;
+            Assert(saved.Count == 1, $"expected one saved position after the drag, found {saved.Count}");
+            int movedX = end.X - startX, movedY = end.Y - startY;
+            Assert(Math.Abs(saved[0].X - (home.X + movedX)) <= 2 && Math.Abs(saved[0].Y - (home.Y + movedY)) <= 2,
+                   $"saved ({saved[0].X}, {saved[0].Y}); the pointer moved the centre from ({home.X}, {home.Y}) by ({movedX}, {movedY})");
+            Assert(GetWindowRect(_host.Handle, out var after), "no window rectangle");
+            Assert(Math.Abs(after.Left - before.Left - movedX) <= 2 && Math.Abs(after.Top - before.Top - movedY) <= 2,
+                   $"the window moved by ({after.Left - before.Left}, {after.Top - before.Top}), the pointer by ({movedX}, {movedY})");
+            Assert(_cancels == cancels, "dragging clicked a button");
+            Assert(GetForegroundWindow() == foreground && GetFocus() != _host.Handle, "dragging the bar changed the focus");
+            var layout = saved[0].Layout;
+
+            // Saved to disk, and used again the next time the bar shows.
+            Assert(new PreferenceStore(_folder).Load().FlowBarPositions.SequenceEqual(saved), "the position was not saved to settings.json");
+            _bar.DismissToast();
+            _bar.Set(FlowPhase.Idle);
+            PumpFor(TimeSpan.FromMilliseconds(80));
+            Assert(!IsWindowVisible(_host.Handle), "the bar did not hide");
+            _bar.Set(FlowPhase.HandsFree);
+            PumpFor(TimeSpan.FromMilliseconds(200));
+            Assert(_host.Anchor is { } shown && Math.Abs(shown.X - saved[0].X) <= 1 && Math.Abs(shown.Y - saved[0].Y) <= 1,
+                   $"shown again at {_host.Anchor}, not where it was left");
+            _host.ViewModel.ResetPositionCommand.Execute(null);
+            PumpFor(TimeSpan.FromMilliseconds(150));
+            Assert(prefs.Current.FlowBarPositions.Count == 0, "Reset position left a saved position");
+            Assert(_host.Anchor is { } back && Math.Abs(back.X - home.X) <= 1 && Math.Abs(back.Y - home.Y) <= 1, "Reset position did not put the bar back at the bottom centre");
+            return $"dragged by ({movedX}, {movedY}) px; saved for displays \"{layout}\" at ({saved[0].X}, {saved[0].Y}); no button clicked, focus unchanged; reset returned it home";
+        }
+
+        public void Dispose()
+        {
+            _behind.Dispose();
+            _bar.DismissToast();
+            _bar.Set(FlowPhase.Idle);
+            PumpFor(TimeSpan.FromMilliseconds(50));
+            _host.Dispose();
+            _dictation.Dispose();
+            _notetaker.Dispose();
+            _bar.Dispose();
+            _hub.Dispose();
+            _owner.Dispose();
+        }
+    }
+
+    static INPUT MouseInput(uint flags, int dx = 0, int dy = 0) =>
+        new() { type = INPUT_MOUSE, u = new InputUnion { mi = new MOUSEINPUT { dx = dx, dy = dy, dwFlags = flags } } };
+
+    static bool SendMouse(uint flags) => SendInput(1, [MouseInput(flags)], Marshal.SizeOf<INPUT>()) == 1;
+
+    static bool Click(int x, int y)
+    {
+        SetCursorPos(x, y);
+        PumpFor(TimeSpan.FromMilliseconds(30));
+        return SendInput(2, [MouseInput(MOUSEEVENTF_LEFTDOWN), MouseInput(MOUSEEVENTF_LEFTUP)], Marshal.SizeOf<INPUT>()) == 2;
+    }
+
+    /// <summary>A real mouse move, in absolute coordinates over the whole virtual desktop.</summary>
+    static bool MoveTo(int x, int y)
+    {
+        int left = GetSystemMetrics(SM_XVIRTUALSCREEN), top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int width = Math.Max(2, GetSystemMetrics(SM_CXVIRTUALSCREEN)), height = Math.Max(2, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+        var nx = (int)Math.Round((x - left) * 65535.0 / (width - 1));
+        var ny = (int)Math.Round((y - top) * 65535.0 / (height - 1));
+        return SendInput(1, [MouseInput(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny)], Marshal.SizeOf<INPUT>()) == 1;
+    }
+
+    static (int R, int G, int B) ReadPixel(int x, int y)
+    {
+        var screen = GetDC(IntPtr.Zero);
+        var memory = CreateCompatibleDC(screen);
+        var bitmap = CreateCompatibleBitmap(screen, 1, 1);
+        var previous = SelectObject(memory, bitmap);
+        try
+        {
+            if (!BitBlt(memory, 0, 0, 1, 1, screen, x, y, SRCCOPY | CAPTUREBLT)) throw new SkipException("the screen could not be read");
+            var color = GetPixel(memory, 0, 0);
+            return ((int)(color & 0xFF), (int)((color >> 8) & 0xFF), (int)((color >> 16) & 0xFF));
+        }
+        finally
+        {
+            SelectObject(memory, previous);
+            DeleteObject(bitmap);
+            DeleteDC(memory);
+            ReleaseDC(IntPtr.Zero, screen);
+        }
+    }
+
+    static bool Near((int R, int G, int B) c, int r, int g, int b, int tolerance) =>
+        Math.Abs(c.R - r) <= tolerance && Math.Abs(c.G - g) <= tolerance && Math.Abs(c.B - b) <= tolerance;
+
+    /// <summary>
+    /// A plain, solid-coloured Win32 window on its own thread with its own message loop, standing in for another
+    /// app under the bar. It counts left clicks and where they landed.
+    /// </summary>
+    sealed class BehindWindow : IDisposable
+    {
+        public const int Red = 0x20, Green = 0xC0, Blue = 0x60;
+        readonly Thread _thread;
+        readonly ManualResetEventSlim _ready = new();
+        readonly string _class = "VoiceFlowSelfTest" + Guid.NewGuid().ToString("N");
+        WndProc? _proc;   // kept alive while the window exists
+        uint _threadId;
+        int _clicks;
+        long _lastClick;
+        Exception? _error;
+
+        public BehindWindow(PxRect bounds)
+        {
+            Bounds = bounds;
+            _thread = new Thread(Run) { IsBackground = true, Name = "Self-test window" };
+            _thread.Start();
+            if (!_ready.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("the test window did not start");
+            if (_error != null) throw _error;
+        }
+
+        public PxRect Bounds { get; }
+        public IntPtr Handle { get; private set; }
+        public int Clicks => Volatile.Read(ref _clicks);
+
+        /// <summary>Where the last click landed, on screen.</summary>
+        public POINT LastClick
+        {
+            get
+            {
+                var packed = Interlocked.Read(ref _lastClick);
+                return new POINT { X = Bounds.X + (short)(packed & 0xFFFF), Y = Bounds.Y + (short)((packed >> 16) & 0xFFFF) };
+            }
+        }
+
+        void Run()
+        {
+            var instance = GetModuleHandleW(null);
+            var brush = CreateSolidBrush((uint)(Red | (Green << 8) | (Blue << 16)));
             try
             {
-                if (!BitBlt(memory, 0, 0, width, 1, screen, position.X, row, SRCCOPY | CAPTUREBLT)) throw new SkipException("the screen could not be read");
-                var hits = 0;
-                for (int x = 0; x < width; x += Math.Max(1, width / 40))
+                _threadId = GetCurrentThreadId();
+                _proc = Procedure;
+                var wc = new WNDCLASSEXW
                 {
-                    var color = GetPixel(memory, x, 0);
-                    int r = (int)(color & 0xFF), g = (int)((color >> 8) & 0xFF), b = (int)((color >> 16) & 0xFF);
-                    if (Math.Abs(r - 0x16) <= 16 && Math.Abs(g - 0x16) <= 16 && Math.Abs(b - 0x16) <= 16) hits++;
-                }
-                if (hits == 0) throw new SkipException($"the toast's fill was not found on screen at y={row} (headless desktop, or the bar did not paint)");
-                return $"{hits} points of the toast's fill read from the screen";
+                    cbSize = Marshal.SizeOf<WNDCLASSEXW>(),
+                    lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_proc),
+                    hInstance = instance,
+                    hbrBackground = brush,
+                    lpszClassName = _class,
+                };
+                if (RegisterClassExW(ref wc) == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                Handle = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, _class, "VoiceFlow self-test", WS_POPUP,
+                                         Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height, IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);
+                if (Handle == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                SetWindowPos(Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
             }
-            finally
+            catch (Exception e)
             {
-                SelectObject(memory, previous);
-                DeleteObject(bitmap);
-                DeleteDC(memory);
-                ReleaseDC(IntPtr.Zero, screen);
-                bar.DismissToast();
+                _error = e;
+                _ready.Set();
+                return;
             }
+            _ready.Set();
+            while (GetMessageW(out var msg, IntPtr.Zero, 0, 0) > 0)
+            {
+                TranslateMessage(ref msg);
+                DispatchMessageW(ref msg);
+            }
+            DestroyWindow(Handle);
+            UnregisterClassW(_class, instance);
+            DeleteObject(brush);
+        }
+
+        IntPtr Procedure(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (msg == WM_LBUTTONDOWN)
+            {
+                Interlocked.Exchange(ref _lastClick, lParam.ToInt64() & 0xFFFFFFFF);
+                Interlocked.Increment(ref _clicks);
+            }
+            return DefWindowProcW(hwnd, msg, wParam, lParam);
+        }
+
+        public void Dispose()
+        {
+            if (_threadId != 0) PostThreadMessageW(_threadId, WM_QUIT, UIntPtr.Zero, IntPtr.Zero);
+            _thread.Join(TimeSpan.FromSeconds(3));
         }
     }
 
