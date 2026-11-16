@@ -13,6 +13,12 @@
         <c:SettingRow Title="Show Flow bar at all times" Description="Off keeps the bar hidden until you dictate.">
           <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding ShowBarWhenIdle}"/>
         </c:SettingRow>
+        <c:SettingRow Title="Flow bar position" Description="Drag the bar to move it. Right-click it to reset or lock it.">
+          <Button Content="Reset position" Command="{Binding ResetBarPositionCommand}"/>
+        </c:SettingRow>
+        <c:SettingRow Title="Lock Flow bar position">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding LockBarPosition}"/>
+        </c:SettingRow>
       </StackPanel>
     </Border>
     <StackPanel Spacing="8">

@@ -7,9 +7,10 @@
         Title="VoiceFlow bar"
         WindowDecorations="None"
         Background="Transparent"
-        TransparencyLevelHint="Transparent"
+        TransparencyLevelHint="Transparent" TransparencyBackgroundFallback="Transparent"
         Topmost="True" ShowInTaskbar="False" CanResize="False" ShowActivated="False"
         SizeToContent="WidthAndHeight">
-  <!-- VoiceFlow.Windows applies WS_EX_NOACTIVATE and click-through on the native handle. -->
-  <v:FlowBarView Padding="8,16,8,8"/>
+  <!-- VoiceFlow.Windows applies WS_EX_NOACTIVATE and clips the window to the bar's shape on the native handle.
+       The padding leaves room for the anti-aliased edge outside that shape; nothing is drawn there. -->
+  <v:FlowBarView Padding="3"/>
 </Window>

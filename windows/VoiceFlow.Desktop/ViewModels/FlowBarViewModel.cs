@@ -6,16 +6,25 @@ using VoiceFlow.Desktop.Services;
 
 namespace VoiceFlow.Desktop.ViewModels;
 
-/// <summary>State of the Flow bar, the small pill at the bottom of the screen.</summary>
+/// <summary>State of the Flow bar, the small capsule on screen while you dictate.</summary>
 public sealed partial class FlowBarViewModel : ObservableObject
 {
     readonly IDictationService _dictation;
+    readonly IPreferencesService _preferences;
     readonly DispatcherTimer? _clock;
+    bool _showMenu;
 
     public FlowBarViewModel(IAppServices services, bool runClock = true)
     {
         _dictation = services.Dictation;
+        _preferences = services.Preferences;
         _dictation.Changed += (_, _) => Refresh();
+        _preferences.Changed += (_, _) =>
+        {
+            OnPropertyChanged(nameof(MenuHint));
+            OnPropertyChanged(nameof(LockTitle));
+            ResetPositionCommand.NotifyCanExecuteChanged();
+        };
         _dictation.LevelsChanged += (_, _) => OnPropertyChanged(nameof(Levels));
         if (runClock)
         {
@@ -46,6 +55,21 @@ public sealed partial class FlowBarViewModel : ObservableObject
     public string? ToastActionTitle => Toast?.ActionTitle;
     public bool HasToastAction => Toast?.Action != null;
 
+    /// <summary>The small menu a right-click on the bar opens.</summary>
+    public bool ShowMenu
+    {
+        get => _showMenu;
+        set
+        {
+            if (SetProperty(ref _showMenu, value)) ResetPositionCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    bool Locked => _preferences.Current.FlowBarLocked;
+    public string MenuHint => Locked ? "Position locked" : "Drag to move";
+    public string LockTitle => Locked ? "Unlock" : "Lock";
+    bool CanResetPosition => _preferences.Current.FlowBarPositions.Count > 0;
+
     void Refresh() => OnPropertyChanged(string.Empty);
 
     [RelayCommand] void StartHandsFree() => _dictation.StartHandsFree();
@@ -55,4 +79,21 @@ public sealed partial class FlowBarViewModel : ObservableObject
     [RelayCommand] void OpenMeetings() => _dictation.OpenMeetings();
     [RelayCommand] void RunToastAction() => Toast?.Action?.Invoke();
     [RelayCommand] void DismissToast() => _dictation.DismissToast();
+
+    [RelayCommand] void ToggleMenu() => ShowMenu = !ShowMenu;
+
+    /// <summary>Back to the bottom centre, for every arrangement of displays.</summary>
+    [RelayCommand(CanExecute = nameof(CanResetPosition))]
+    void ResetPosition()
+    {
+        _preferences.Update(p => p.FlowBarPositions = []);
+        ShowMenu = false;
+    }
+
+    [RelayCommand]
+    void ToggleLock()
+    {
+        _preferences.Update(p => p.FlowBarLocked = !p.FlowBarLocked);
+        ShowMenu = false;
+    }
 }

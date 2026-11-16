@@ -19,9 +19,10 @@ using VoiceFlow.Desktop.ViewModels;
 using VoiceFlow.Desktop.Views;
 
 // Renders every screen to PNG on any OS: dotnet run --project ... -- --screenshots <dir>
-if (args.Length < 2 || args[0] != "--screenshots")
+// The Flow bar's states over a busy desktop: dotnet run --project ... -- --capsule <dir>
+if (args.Length < 2 || args[0] is not ("--screenshots" or "--capsule"))
 {
-    Console.Error.WriteLine("usage: --screenshots <dir>");
+    Console.Error.WriteLine("usage: --screenshots <dir> | --capsule <dir>");
     return 2;
 }
 
@@ -32,6 +33,12 @@ AppBuilder.Configure<App>()
     .UseSkia()
     .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false, OverlayPopups = true })
     .SetupWithoutStarting();
+
+if (args[0] == "--capsule")
+{
+    CapsuleShots.All(dir, new DateTimeOffset(2026, 11, 10, 18, 42, 0, TimeSpan.Zero));
+    return 0;
+}
 
 var issues = new StringBuilder();
 foreach (var (theme, label) in new[] { (ThemeVariant.Dark, "dark"), (ThemeVariant.Light, "light") })

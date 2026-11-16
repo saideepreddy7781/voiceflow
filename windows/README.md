@@ -55,7 +55,9 @@ Output: `windows/VoiceFlow.Windows/bin/Release/net8.0-windows/<rid>/publish/Voic
 Avalonia shell, so CI exercises the exe that ships: Avalonia starting under the single-file host, the icons and theme
 found inside the exe, Telugu and Hindi text shaped and rendered, every page, settings section and onboarding step built
 off-screen, and the real Flow bar window with `WS_EX_NOACTIVATE` and `WS_EX_TOOLWINDOW` read back from its handle and shown
-only while there is a toast. It also covers struct layouts, prompt line endings, atomic JSON writes in a temp folder,
+only while there is a toast. With an interactive desktop it puts the bar over a plain window on another thread, reads
+the screen around the capsule to see that window unchanged, clicks there with `SendInput` and checks the clicks reach it,
+clicks the bar's Cancel button and checks the focus did not move, then drags the bar and checks the saved position. It also covers struct layouts, prompt line endings, atomic JSON writes in a temp folder,
 Credential Manager with a dummy secret, a clipboard round trip with the history-exclusion formats, the keyboard hook on
 its own thread seeing VoiceFlow's own injected key and ignoring it, UI Automation against plain Win32 password and edit
 boxes (including the text before the caret), audio device listing and the Groq request body (built, never sent). It
@@ -83,7 +85,7 @@ attaches to the parent console when run from `cmd.exe`.
 - **Command Mode:** select text, hold **Ctrl + Win + Alt** (or add Alt while holding) and say what to do, such as "make this formal". Backspace cancels.
 - **Paste the last result:** **Alt + Shift + V**, or the tray menu.
 - **Scratchpad:** **Alt + Shift + S** opens it, and pressing it again while it is in front hides it. The macOS shortcut is Option + S, but Alt + S drives app menus on Windows, so this uses the same Alt + Shift family as Paste last.
-- **Flow bar:** appears at the bottom centre of the active monitor only while you dictate, while a toast is up, or as a small chip during a meeting. It never takes focus, and clicks pass through it except on its buttons and toasts. Settings → System can keep a resting bar on screen; it is off by default.
+- **Flow bar:** appears at the bottom centre of the active monitor only while you dictate, while a toast is up, or as a small chip during a meeting. It never takes focus. Only the capsule and its toasts take clicks; everything around them stays visible and clickable. Drag it anywhere: it snaps to the edges and back to the bottom centre, and it remembers the spot for each arrangement of displays. Right-click it, or use Settings → System, to reset or lock the position. Settings → System can also keep a resting bar on screen; it is off by default.
 - **Meetings:** when Zoom, Teams, Meet, Webex or a similar app is in a call, a toast offers to take notes. VoiceFlow only asks; recording starts only when you click. Turn it off in Settings → Notetaker.
 - **Two sides of a call:** your microphone and the call are transcribed separately, so You and Others are real labels. Only voiced audio is uploaded. A chunk that fails is held in memory (never on disk, at most 20 minutes of audio) and retried at Stop. What is still lost is marked in the transcript. If the default speakers or headset change during a call, the recording follows them.
 - **Meetings page:** search covers titles, notes and transcripts and shows where it matched. You can rename Others per meeting, tick action items (ticks survive Rewrite notes) and copy the notes as Markdown. The live view shows the language last heard on each side. Clicking the chip on the Flow bar opens this page.
