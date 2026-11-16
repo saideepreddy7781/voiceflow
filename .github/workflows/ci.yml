@@ -62,7 +62,9 @@ jobs:
           xattr -l "$app"
           codesign -d -r- "$app"
           spctl -a -vv "$app" || echo "spctl rejects it, as expected for a build that isn't notarized"
-          bash scripts/install.sh --version 0.2.0 --dir "$dir" --no-launch | grep -q "Reinstalled VoiceFlow 0.2.0"
+          again="$(bash scripts/install.sh --version 0.2.0 --dir "$dir" --no-launch)"
+          echo "$again"
+          case "$again" in *"Reinstalled VoiceFlow 0.2.0"*) ;; *) echo "::error::reinstall not reported"; exit 1 ;; esac
           if bash scripts/install.sh --version 0.1.0 --dir "$dir" --no-launch; then echo "::error::0.1.0 was not refused"; exit 1; fi
           bash scripts/install.sh --uninstall --dir "$dir"
           test ! -e "$app"
