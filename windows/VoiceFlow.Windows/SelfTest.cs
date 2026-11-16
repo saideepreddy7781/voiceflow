@@ -846,12 +846,31 @@ internal static class SelfTest
             return $"capsule fill on screen; {outside.Count} points around it show the window behind unchanged";
         }
 
+        /// <summary>
+        /// Another program's window at a test point (a runner's console, a notification) makes a click test
+        /// meaningless, so the check is skipped and the window named.
+        /// </summary>
+        string? ForeignWindowAt(int x, int y, bool expectBar)
+        {
+            var hit = WindowFromPoint(new POINT { X = x, Y = y });
+            var root = hit == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hit, GA_ROOT);
+            if (root == _host.Handle || (!expectBar && root == _behind.Handle)) return null;
+            var name = new StringBuilder(128);
+            if (root != IntPtr.Zero) GetClassNameW(root, name, name.Capacity);
+            GetWindowThreadProcessId(root, out var pid);
+            string process;
+            try { process = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { process = $"pid {pid}"; }
+            return $"\"{name}\" of {process}";
+        }
+
         public string ClickThrough()
         {
             var outside = OutsidePoints();
             Assert(outside.Count >= 3, $"only {outside.Count} test points outside the shape");
             foreach (var (name, x, y) in outside)
             {
+                if (ForeignWindowAt(x, y, expectBar: false) is { } other)
+                    throw new SkipException($"another program's window ({other}) covers the {name} at ({x}, {y})");
                 var before = _behind.Clicks;
                 if (!Click(x, y)) throw new SkipException($"SendInput was refused (error {Marshal.GetLastWin32Error()})");
                 var until = DateTime.UtcNow.AddSeconds(2);
@@ -871,6 +890,8 @@ internal static class SelfTest
             var centre = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), _host.Window) ?? throw new InvalidOperationException("the Cancel button is not in the window");
             var o = ClientOrigin();
             int x = o.X + (int)Math.Round(centre.X * Scale), y = o.Y + (int)Math.Round(centre.Y * Scale);
+            if (ForeignWindowAt(x, y, expectBar: true) is { } other)
+                throw new SkipException($"another program's window ({other}) covers the Cancel button at ({x}, {y})");
             var foreground = GetForegroundWindow();
             var behindClicks = _behind.Clicks;
             var cancels = _cancels;
@@ -903,6 +924,8 @@ internal static class SelfTest
             int dx = (int)Math.Round(160 * Scale), dy = -(int)Math.Round(180 * Scale);
             if (startX - dx < work.Left + 2 * c.Width) dx = -dx;
             if (startY + dy < work.Top + 4 * c.Height) throw new SkipException("the screen is too short to drag the bar upwards");
+            if (ForeignWindowAt(startX, startY, expectBar: true) is { } other)
+                throw new SkipException($"another program's window ({other}) covers the bar at ({startX}, {startY})");
             var foreground = GetForegroundWindow();
             var cancels = _cancels;
 
