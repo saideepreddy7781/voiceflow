@@ -6,6 +6,27 @@ All notable changes to VoiceFlow are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-16
+
+### Security
+
+- One-line installers for macOS and Windows that verify the checksum, the macOS code signature and the build
+  attestation before installing, with no administrator rights.
+- The Windows executable is built uncompressed, which looks less like packed malware to antivirus scanners.
+- New security review of the app, installers and release pipeline in `docs/SECURITY-REVIEW.md`.
+
+### Fixed
+
+- Meetings recorded no microphone audio while a call app used voice processing (Google Meet in Chrome, Zoom, FaceTime).
+- Quiet speech during calls was discarded as silence; speech is now judged against the capture's noise floor.
+- The Flow bar blocked clicks and scrolls around the capsule on macOS and Windows.
+- Dead microphones and missing call audio are reported within seconds.
+
+### Added
+
+- Drag the Flow bar anywhere, with positions remembered per display arrangement and a Reset position command.
+- Notetaker stops after a call ends, with a Keep recording notice and a setting to turn it off.
+
 ## [0.2.0] - 2026-11-10
 
 ### Security
