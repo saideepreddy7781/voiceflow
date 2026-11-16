@@ -540,7 +540,12 @@ extension Runner {
         try? FileManager.default.removeItem(at: out)
         try? await Task.sleep(for: .seconds(2))
         scenario.devices += DeviceInfo.all(label: "after")
-        let after = AudioDevices.anotherAppIsRecording()
+        // Core Audio can report a finished process for a moment after it exits.
+        var after = AudioDevices.anotherAppIsRecording()
+        for _ in 0..<12 where after == true {
+            try? await Task.sleep(for: .milliseconds(500))
+            after = AudioDevices.anotherAppIsRecording()
+        }
         event("another app recording: before \(before.map(String.init) ?? "unknown"), during \(during.map(String.init) ?? "unknown"), after \(after.map(String.init) ?? "unknown")")
         // What call-end detection and meeting detection rely on.
         if before != false || during != true || after != false { fail("another-app-recording check was wrong") }
