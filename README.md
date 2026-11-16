@@ -16,7 +16,7 @@
 
 VoiceFlow is free and open source under the MIT license. You use your own free [Groq](https://console.groq.com/keys) API key, and there is no account to create and no server of ours in the path. It removes filler words, applies the corrections you say out loud, and matches the tone of the app you're in.
 
-Two things to know first. Dictation needs an internet connection and a Groq key, because your audio is sent to Groq for transcription. And the builds aren't notarized by Apple or code-signed for Windows, so the first launch takes one extra click.
+Two things to know first. Dictation needs an internet connection and a Groq key, because your audio is sent to Groq for transcription. And the builds aren't notarized by Apple or code-signed for Windows. The [one-line installers](#download-and-install) check the download and skip the security prompt; a copy you download yourself needs one extra click on first launch.
 
 > VoiceFlow is an independent project. It is not affiliated with, endorsed by, or connected to Wispr Flow or Wispr AI, Inc.
 
@@ -106,7 +106,60 @@ Windows has the features above too. Calendar titles for meetings and Settings > 
 
 ## Download and install
 
-Get the latest version from [Releases](https://github.com/saideepreddy7781/voiceflow/releases/latest). You also need a free Groq key from [console.groq.com/keys](https://console.groq.com/keys).
+You also need a free Groq key from [console.groq.com/keys](https://console.groq.com/keys).
+
+### macOS
+
+Open Terminal and paste this line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/scripts/install.sh | bash
+```
+
+It downloads the latest release, checks its SHA-256 against the release's `SHA256SUMS.txt`, checks that the app is signed by VoiceFlow's certificate, then puts VoiceFlow in Applications and opens it. If your account can't write to Applications, it uses the Applications folder in your home folder instead. It never asks for your password. Run the same line again to update.
+
+A copy fetched this way isn't marked as downloaded from the internet, so macOS doesn't ask you to approve it. The welcome window then asks for your Groq key and for Microphone and Accessibility permission. Accessibility is how VoiceFlow notices the dictation key and types into other apps.
+
+To remove VoiceFlow, end the line with `bash -s -- --uninstall` instead of `bash`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/scripts/install.sh | bash -s -- --uninstall
+```
+
+Add `--purge` after `--uninstall` to delete your settings, history and saved key too. `--help` lists the other options, such as `--version 0.2.0`.
+
+**Download it yourself.** Get `VoiceFlow-x.y.z-macOS.dmg` from [Releases](https://github.com/saideepreddy7781/voiceflow/releases/latest), open it and drag VoiceFlow to Applications. The first time you open it, macOS says it can't verify the app. Click Done, open System Settings > Privacy & Security, scroll down to Security and click Open Anyway, then enter your login password. The button is there for about an hour after you tried to open the app ([Apple's Mac User Guide](https://support.apple.com/guide/mac-help/mh40616/mac)). On macOS 15 and later, Control-clicking the app and choosing Open no longer gets past this step ([Apple, 6 August 2024](https://developer.apple.com/news/?id=saqachfa)).
+
+**Homebrew.**
+
+```bash
+brew tap saideepreddy7781/voiceflow https://github.com/saideepreddy7781/voiceflow
+brew install --cask saideepreddy7781/voiceflow/voiceflow
+```
+
+Homebrew marks the app as downloaded, so the first launch needs Open Anyway as above. [docs/packaging/homebrew.md](docs/packaging/homebrew.md) explains why the second command names the tap and what happens on `brew upgrade`.
+
+### Windows
+
+Open PowerShell from the Start menu (no administrator needed) and paste this line:
+
+```powershell
+irm https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/scripts/install.ps1 | iex
+```
+
+It picks the x64 or Arm build for your PC, checks its SHA-256 against the release, installs it for your account in `%LOCALAPPDATA%\Programs\VoiceFlow`, adds it to the Start menu and to Settings > Apps > Installed apps, and starts it. Run the same line again to update. Paste your Groq key in the welcome window. VoiceFlow lives in the notification area next to the clock.
+
+SmartScreen's "Windows protected your PC" warning appears for programs that carry the mark Windows adds to downloads from a browser. The installer makes sure the installed copy has no such mark, and it removes one only after the checksum matches. Two things can still stop VoiceFlow. On Windows 11, Smart App Control blocks unsigned apps and has no way to allow a single app ([Microsoft](https://support.microsoft.com/topic/285ea03d-fa88-4d56-882e-6698afdb7003)). And your antivirus scans the program as it would any other.
+
+Uninstall from Settings > Apps > Installed apps, or in PowerShell:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/scripts/install.ps1))) -Uninstall
+```
+
+Add `-Purge` to delete your settings, history and saved key too.
+
+**Download it yourself.** Get the `.exe` for your PC from [Releases](https://github.com/saideepreddy7781/voiceflow/releases/latest). It is a single portable program, so put it anywhere and double-click it. SmartScreen says "Windows protected your PC": click More info, then Run anyway. See [windows/README.md](windows/README.md) for more.
 
 | System | File |
 |---|---|
@@ -114,37 +167,25 @@ Get the latest version from [Releases](https://github.com/saideepreddy7781/voice
 | Windows 10 or 11, most PCs | `VoiceFlow-x.y.z-Windows-x64.exe` |
 | Windows 11 on Arm | `VoiceFlow-x.y.z-Windows-arm64.exe` |
 
-### macOS
+A downloaded copy needs the extra click once per version. Self-signed macOS releases (0.2.0 and later) keep Microphone and Accessibility when you update, and ad hoc builds ask for them again. Each release's notes say how that build was signed.
 
-Open the DMG and drag VoiceFlow to Applications, or use Homebrew:
+### Why does my computer warn me?
 
-```bash
-brew tap saideepreddy7781/voiceflow https://github.com/saideepreddy7781/voiceflow
-brew install --cask saideepreddy7781/voiceflow/voiceflow
-```
+Apple and Microsoft trust an app without asking you when its developer has paid for an identity they vouch for: an Apple Developer ID with notarization, or a Windows code-signing certificate. VoiceFlow is free and open source, and the project doesn't pay for either.
 
-The welcome window then asks for your Groq key and for Microphone and Accessibility permission. Accessibility is how VoiceFlow notices the dictation key and types into other apps. [docs/packaging/homebrew.md](docs/packaging/homebrew.md) explains why the second command names the tap.
+So the macOS app is signed with the project's own certificate. That keeps your permissions across updates and lets the installer check who built it, but Apple doesn't know the certificate, so a downloaded copy needs Open Anyway. The Windows app isn't signed at all. SmartScreen warns about programs it hasn't seen many people run, and some antivirus tools are wary of an unsigned program that watches for a hotkey and types into other windows, which is exactly what dictation needs. If your antivirus flags VoiceFlow, please [open an issue](https://github.com/saideepreddy7781/voiceflow/issues/new/choose) with the name of the detection.
 
-### Windows
-
-Download the `.exe` for your PC. It is a single portable program, so put it anywhere and double-click it. Paste your Groq key in the welcome window. VoiceFlow lives in the notification area next to the clock. See [windows/README.md](windows/README.md) for more.
-
-### First launch of an unsigned build
-
-On macOS, open VoiceFlow once, then go to System Settings > Privacy & Security, scroll down and click Open Anyway. Homebrew installs need this too.
-
-On Windows, SmartScreen says "Windows protected your PC". Click More info, then Run anyway.
-
-You do this once per version. Self-signed macOS releases keep Microphone and Accessibility when you update, and ad hoc builds ask for them again. Each release's notes say how that build was signed.
-
-### Check your download
-
-Every release has a `SHA256SUMS.txt` and a build attestation that ties the file to this repository's GitHub Actions:
+You can check a download yourself. Every release has a `SHA256SUMS.txt` and a build attestation that ties each file to the GitHub Actions run that built it from this repository:
 
 ```bash
 shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 gh attestation verify VoiceFlow-x.y.z-macOS.dmg -R saideepreddy7781/voiceflow
+codesign -d -r- /Applications/VoiceFlow.app
 ```
+
+On Windows, compare `Get-FileHash VoiceFlow-x.y.z-Windows-x64.exe` with `SHA256SUMS.txt`. The last macOS command should print `identifier "com.saideep.voiceflow" and certificate leaf = H"c5ba95cee6f634c2933e3c47cb68e5da8b511ed5"`.
+
+The installers run the checksum check for you, the signature check on macOS, and the attestation check when the `gh` command is installed and signed in. Piping a script into a shell means trusting this repository's main branch. To read it first, open [scripts/install.sh](scripts/install.sh) or [scripts/install.ps1](scripts/install.ps1), or download the file and run it from disk.
 
 ## Languages
 
@@ -208,7 +249,7 @@ Windows needs the .NET 8 SDK. It builds on any OS and runs on Windows:
 ```bash
 dotnet test windows/VoiceFlow.Core.Tests
 dotnet test windows/VoiceFlow.Desktop.Tests
-dotnet publish windows/VoiceFlow.Windows -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+dotnet publish windows/VoiceFlow.Windows -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
 Live tests against Groq run when `GROQ_API_KEY` is set. Releases are built by GitHub Actions, as described in [docs/RELEASING.md](docs/RELEASING.md).

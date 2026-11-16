@@ -76,7 +76,8 @@ footer ul{display:flex;flex-wrap:wrap;gap:6px 20px;margin:0 0 14px;padding:0;lis
 <h1>Hold a key.<br>Speak.<br><em>Let go.</em></h1>
 <p class="lead">Clean text appears where your cursor is, in any app on macOS or Windows. VoiceFlow is free and open source, and you bring your own Groq key.</p>
 <div class="cta">
-  <a class="btn solid" href="https://github.com/saideepreddy7781/voiceflow/releases/latest">Download</a>
+  <a class="btn solid" href="#install">Install</a>
+  <a class="btn" href="https://github.com/saideepreddy7781/voiceflow/releases/latest">Download</a>
   <a class="btn" href="https://github.com/saideepreddy7781/voiceflow">Read the source</a>
 </div>
 
@@ -112,21 +113,23 @@ footer ul{display:flex;flex-wrap:wrap;gap:6px 20px;margin:0 0 14px;padding:0;lis
 <div class="honest" id="know">
   <h2>What you should know first</h2>
   <p><strong>Your audio goes to Groq.</strong> VoiceFlow has no servers of its own, and dictation needs an internet connection and your Groq key. <a href="https://github.com/saideepreddy7781/voiceflow/blob/main/docs/PRIVACY.md">The privacy page</a> lists exactly what is sent. <a href="https://console.groq.com/docs/legal/services-agreement">Groq's agreement</a> bars training on your API data. Groq may keep logs for up to 30 days for reliability and abuse, and <a href="https://console.groq.com/docs/your-data">Zero Data Retention</a> in Groq's console stops that (read 2026-11-10).</p>
-  <p><strong>macOS will warn you the first time.</strong> Builds aren't notarized, because that needs a paid Apple account and this project doesn't have one. Open the app once, then click Open Anyway in System Settings under Privacy &amp; Security.</p>
-  <p><strong>Windows will warn you too.</strong> The executables aren't signed, so SmartScreen appears. Click More info, then Run anyway.</p>
+  <p><strong>The apps aren't notarized by Apple or signed for Windows.</strong> Both need paid accounts, and this free project doesn't have them. The one-line installers below check every download first and skip the security prompt. A copy you download yourself needs one extra click the first time: Open Anyway on a Mac, Run anyway on Windows.</p>
   <p><strong>The Windows app is new.</strong> It has passed automated checks on real Windows runners, and real-world testing on people's PCs is still early. Please report what breaks.</p>
 </div>
 
 <section id="install">
   <h2>Install</h2>
-  <h3 class="os">macOS 14 or later</h3>
-  <pre><code>brew tap saideepreddy7781/voiceflow https://github.com/saideepreddy7781/voiceflow
-brew install --cask saideepreddy7781/voiceflow/voiceflow</code></pre>
-  <p>Or download the DMG from <a href="https://github.com/saideepreddy7781/voiceflow/releases/latest">Releases</a>.</p>
-  <h3 class="os">Windows 10 or 11</h3>
-  <pre><code>VoiceFlow-x.y.z-Windows-x64.exe    most PCs
-VoiceFlow-x.y.z-Windows-arm64.exe  Windows on Arm</code></pre>
-  <p>You also need a free key from <a href="https://console.groq.com/keys">console.groq.com/keys</a>. Every release has checksums and a build attestation, and the <a href="https://github.com/saideepreddy7781/voiceflow/releases/latest">release notes</a> show how to verify yours.</p>
+  <p>You also need a free key from <a href="https://console.groq.com/keys">console.groq.com/keys</a>.</p>
+  <h3 class="os">macOS 14 or later: paste into Terminal</h3>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/scripts/install.sh | bash</code></pre>
+  <p>It checks the download's SHA-256 and that the app is signed by VoiceFlow's certificate, puts VoiceFlow in Applications without asking for your password, and opens it. Run it again to update. <a href="https://github.com/saideepreddy7781/voiceflow#macos">The README</a> shows how to uninstall.</p>
+  <p>Or download the DMG from <a href="https://github.com/saideepreddy7781/voiceflow/releases/latest">Releases</a> and drag VoiceFlow to Applications. The first time you open it, macOS says it can't verify the app. Click Done, then go to System Settings &gt; Privacy &amp; Security, scroll to Security and click Open Anyway. On macOS 15 and later, Control-click &gt; Open no longer gets past this. Homebrew installs need Open Anyway too.</p>
+  <h3 class="os">Windows 10 or 11: paste into PowerShell</h3>
+  <pre><code>irm https://raw.githubusercontent.com/saideepreddy7781/voiceflow/main/scripts/install.ps1 | iex</code></pre>
+  <p>It picks the x64 or Arm build, checks its SHA-256, installs it for your account with a Start menu shortcut and an entry in Settings &gt; Apps, and starts it. No administrator rights needed. Smart App Control on Windows 11 still blocks unsigned apps, and if it is on, VoiceFlow can't run.</p>
+  <p>Or download <code>VoiceFlow-x.y.z-Windows-x64.exe</code> (most PCs) or <code>-arm64.exe</code> (Windows on Arm) from <a href="https://github.com/saideepreddy7781/voiceflow/releases/latest">Releases</a> and double-click it. When SmartScreen says "Windows protected your PC", click More info, then Run anyway.</p>
+  <h3 class="os">Why the warnings?</h3>
+  <p>Apple and Microsoft skip the prompt for apps whose developer pays for an identity they vouch for. VoiceFlow is free and doesn't pay for one. Instead, every release has a <code>SHA256SUMS.txt</code> and a GitHub build attestation that ties each file to the run that built it from the public source, and the installers check them for you. <a href="https://github.com/saideepreddy7781/voiceflow#why-does-my-computer-warn-me">More on checking a download</a>.</p>
 </section>
 </main>
 
