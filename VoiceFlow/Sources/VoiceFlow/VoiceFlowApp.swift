@@ -1,13 +1,20 @@
 import AppKit
 import SwiftUI
 
-/// `--screenshots <dir>` renders the UI with demo data and quits. Everything else starts the real app.
+/// `--screenshots <dir>` renders the UI with demo data and quits. `--audio-selftest <file>` checks the meeting audio
+/// paths on real hardware and quits. Everything else starts the real app.
 @main
 @MainActor
 enum Launch {
     static func main() {
         if let directory = ScreenshotMode.requestedDirectory(CommandLine.arguments) {
             ScreenshotMode.run(to: directory)
+        }
+        if let (seconds, output) = CallSimulator.requested(CommandLine.arguments) {
+            CallSimulator.run(seconds: seconds, to: output)
+        }
+        if let output = AudioSelfTest.requestedOutput(CommandLine.arguments) {
+            AudioSelfTest.run(to: output)
         }
         VoiceFlowApp.main()
     }

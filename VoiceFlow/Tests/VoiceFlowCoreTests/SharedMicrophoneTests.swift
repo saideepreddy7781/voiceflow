@@ -257,29 +257,40 @@ struct MicHealthMonitorTests {
 
     @Test func aStallRestartsWithinSeconds() {
         var monitor = MicHealthMonitor()
-        let decisions = run(&monitor, seconds: 4, count: 0, silent: false)
+        let decisions = run(&monitor, seconds: 2, count: 0, silent: false)
         #expect(decisions.last == .init(state: .restarting, restart: true))
         #expect(decisions.dropLast().allSatisfy { !$0.restart })
     }
 
-    @Test func aStallThatDoesNotRecoverIsReported() {
+    @Test func aStallThatDoesNotRecoverIsReportedWithinSeconds() {
         var monitor = MicHealthMonitor()
-        let decisions = run(&monitor, seconds: 19, count: 0, silent: false)
-        #expect(decisions.filter(\.restart).count == 3)
+        let decisions = run(&monitor, seconds: 5, count: 0, silent: false)
+        #expect(decisions.filter(\.restart).count == 2)
         #expect(decisions.last?.state == .noAudio)
+        #expect(decisions.dropLast().allSatisfy { $0.state != .noAudio })
         // It keeps trying quietly, so a reconnected mic comes back without the user doing anything.
         let later = run(&monitor, seconds: 61, count: 0, silent: false)
-        #expect(later.contains { $0.restart })
+        #expect(later.filter(\.restart).count == 2)
         #expect(later.last?.state == .noAudio)
     }
 
-    @Test func digitalSilenceGetsALongerGracePeriodAndFewerAttempts() {
+    @Test func digitalSilenceIsReportedWithinSixSeconds() {
+        // What the microphone sent while a call app held it, before the capture moved off AVAudioEngine.
         var monitor = MicHealthMonitor()
-        let first = run(&monitor, seconds: 10, count: 16_000, silent: true)
+        let first = run(&monitor, seconds: 3, count: 16_000, silent: true)
         #expect(first.filter(\.restart).count == 1)
         #expect(first.last?.state == .restarting)
-        let second = run(&monitor, seconds: 20, count: 16_000, silent: true)
+        let second = run(&monitor, seconds: 3, count: 16_000, silent: true)
         #expect(second.last == .init(state: .silent, restart: true))
+    }
+
+    @Test func aShortGlitchIsNeverReported() {
+        var monitor = MicHealthMonitor()
+        let decisions = run(&monitor, seconds: 1, count: 0, silent: false)
+            + run(&monitor, seconds: 1, count: 16_000, silent: false)
+            + run(&monitor, seconds: 2, count: 16_000, silent: true)
+            + run(&monitor, seconds: 1, count: 16_000, silent: false)
+        #expect(decisions.allSatisfy { !$0.restart && ($0.state == .healthy) })
     }
 
     @Test func recoveryClearsTheProblem() {
@@ -288,7 +299,7 @@ struct MicHealthMonitorTests {
         #expect(monitor.state == .noAudio)
         #expect(monitor.observe(sampleCount: 16_000, digitallySilent: false) == .init(state: .healthy, restart: false))
         // The next episode starts from scratch.
-        let again = run(&monitor, seconds: 4, count: 0, silent: false)
+        let again = run(&monitor, seconds: 2, count: 0, silent: false)
         #expect(again.last == .init(state: .restarting, restart: true))
     }
 
@@ -332,13 +343,13 @@ struct MeetingMicHealthTests {
         try recorder.start(title: "t", app: "", attendees: [], settings: Self.settings, autoTick: false)
         for _ in 0..<3 { recorder.tick() }
         mic.stalled = true
-        for _ in 0..<4 { recorder.tick() }
+        for _ in 0..<2 { recorder.tick() }
         #expect(mic.restarts == 1)
         #expect(recorder.micHealth == .healthy || recorder.micHealth == .restarting)
         recorder.tick()
         #expect(recorder.micHealth == .healthy)
         _ = await recorder.stop()
-        #expect(recorder.micMissingSeconds == 4)
+        #expect(recorder.micMissingSeconds == 2)
     }
 
     @Test func aDeadMicIsReportedAndTheMeetingCarriesOn() async throws {
@@ -347,12 +358,12 @@ struct MeetingMicHealthTests {
         let recorder = makeRecorder(mic)
         try recorder.start(title: "t", app: "", attendees: [], settings: Self.settings, autoTick: false)
         mic.stalled = true
-        for _ in 0..<19 { recorder.tick() }
+        for _ in 0..<5 { recorder.tick() }
         #expect(recorder.micHealth == .noAudio)
-        #expect(mic.restarts == 3)
+        #expect(mic.restarts == 2)
         #expect(recorder.isRecording)
         let meeting = await recorder.stop()
-        #expect(meeting?.micMissingSeconds == 19)
+        #expect(meeting?.micMissingSeconds == 5)
     }
 
     @Test func anIntactMeetingRecordsNoMissingSeconds() async throws {
@@ -363,5 +374,46 @@ struct MeetingMicHealthTests {
         let meeting = await recorder.stop()
         #expect(meeting?.micMissingSeconds == nil)
         #expect(mic.restarts == 0)
+    }
+}
+
+struct InputRouteTests {
+    private let builtIn = InputRoute(deviceID: 89, sampleRate: 48_000, channels: 1, alive: true, followsDefault: true, defaultInputID: 89)
+
+    @Test func notificationsThatChangeNothingKeepCapture() {
+        // Another app starting the device, a volume change, a new device appearing elsewhere.
+        #expect(!InputRoute.needsRebuild(running: builtIn, now: builtIn))
+    }
+
+    @Test func airPodsSwitchingToCallModeRebuilds() {
+        let airPods = InputRoute(deviceID: 140, sampleRate: 24_000, channels: 1, alive: true, followsDefault: true, defaultInputID: 140)
+        var callMode = airPods
+        callMode.sampleRate = 16_000
+        #expect(InputRoute.needsRebuild(running: airPods, now: callMode))
+    }
+
+    @Test func aNewDefaultInputIsFollowedOnlyWithoutAChosenDevice() {
+        var now = builtIn
+        now.defaultInputID = 140
+        #expect(InputRoute.needsRebuild(running: builtIn, now: now))
+        var chosen = builtIn
+        chosen.followsDefault = false
+        #expect(!InputRoute.needsRebuild(running: chosen, now: now))
+    }
+
+    @Test func voiceProcessingAddingChannelsDoesNotRebuild() {
+        // 1 → 3 channels on the built-in microphone when a call app turns on voice processing.
+        var now = builtIn
+        now.channels = 3
+        #expect(!InputRoute.needsRebuild(running: builtIn, now: now))
+    }
+
+    @Test func aDeviceThatDisappearsRebuilds() {
+        var gone = builtIn
+        gone.alive = false
+        gone.followsDefault = false
+        var chosen = builtIn
+        chosen.followsDefault = false
+        #expect(InputRoute.needsRebuild(running: chosen, now: gone))
     }
 }

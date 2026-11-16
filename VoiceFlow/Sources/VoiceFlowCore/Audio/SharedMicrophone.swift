@@ -15,14 +15,42 @@ extension SampleBuffer: SampleSink {}
 final class MicFanOut: SampleSink, @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock()
     private var buffers: [SampleBuffer] = []
+    private var blocks = 0
+    private var samples = 0
 
     func add(_ buffer: SampleBuffer) { lock.withLock { buffers.append(buffer) } }
     func remove(_ buffer: SampleBuffer) { lock.withLock { buffers.removeAll { $0 === buffer } } }
 
     func append(_ new: [Float]) {
-        let targets = lock.withLock { buffers }
+        let targets = lock.withLock {
+            blocks += 1
+            samples += new.count
+            return buffers
+        }
         for target in targets { target.append(new) }
     }
+
+    /// Blocks and samples delivered by the engine since launch.
+    var delivered: (blocks: Int, samples: Int) { lock.withLock { (blocks, samples) } }
+}
+
+/// What the microphone engine is doing, for diagnostics. Numbers only.
+public struct MicEngineDiagnostics: Sendable, Codable, Equatable {
+    public var state = "stopped"
+    public var subscribers = 0
+    public var restartCount = 0
+    public var engineRunning = false
+    public var inputSampleRate = 0.0
+    public var inputChannels = 0
+    /// The Core Audio device the input node is reading.
+    public var inputDeviceID: UInt32 = 0
+    public var configurationChanges = 0
+    public var configurationChangesIgnored = 0
+    public var blocksDelivered = 0
+    public var samplesDelivered = 0
+    public var lastError: String?
+
+    public init() {}
 }
 
 /// The capture hardware behind `SharedMicrophone`. The real one wraps AVAudioEngine; tests use a fake.
@@ -33,6 +61,12 @@ protocol MicrophoneEngine: AnyObject {
     /// Starts capture. Delivers 16 kHz mono samples to `sink` from the audio thread.
     func start(deviceUID: String?, sink: any SampleSink) throws
     func stop()
+    /// Fills in what only the engine knows.
+    func describe(into diagnostics: inout MicEngineDiagnostics)
+}
+
+extension MicrophoneEngine {
+    func describe(into diagnostics: inout MicEngineDiagnostics) {}
 }
 
 /// One subscriber's view of the microphone: its own samples, independent of every other subscriber.
@@ -114,6 +148,19 @@ public final class SharedMicrophone {
         lastError = nil
     }
 
+    public var diagnostics: MicEngineDiagnostics {
+        var d = MicEngineDiagnostics()
+        d.state = "\(state)"
+        d.subscribers = subscriptions.count
+        d.restartCount = restartCount
+        d.lastError = lastError
+        let delivered = fanOut.delivered
+        d.blocksDelivered = delivered.blocks
+        d.samplesDelivered = delivered.samples
+        engine.describe(into: &d)
+        return d
+    }
+
     /// Rebuilds the engine for a stalled microphone. Subscribers stay attached.
     public func restart() {
         guard !subscriptions.isEmpty, state != .recovering else { return }
@@ -156,72 +203,5 @@ public final class SharedMicrophone {
             }
             self?.state = .failed
         }
-    }
-}
-
-/// The real engine: one AVAudioEngine, rebuilt from scratch on every start.
-@MainActor
-final class LiveMicrophoneEngine: MicrophoneEngine {
-    var onConfigurationChange: (@MainActor () -> Void)?
-
-    private let log = Logger(subsystem: "com.saideep.voiceflow", category: "audio")
-    private var engine: AVAudioEngine?
-    private var observer: NSObjectProtocol?
-    private var tapFormat: AVAudioFormat?
-
-    func start(deviceUID: String?, sink: any SampleSink) throws {
-        guard AudioRecorder.microphoneStatus == .authorized else { throw AudioRecorder.RecorderError.microphoneDenied }
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        if let deviceUID, let device = AudioDevices.device(uid: deviceUID), let unit = input.audioUnit {
-            var id = device.id
-            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                 &id, UInt32(MemoryLayout<AudioDeviceID>.size))
-        }
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { throw AudioRecorder.RecorderError.noInput }
-        guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: AudioMath.sampleRate, channels: 1, interleaved: false),
-              let converter = AVAudioConverter(from: inputFormat, to: target) else { throw AudioRecorder.RecorderError.converter }
-
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat,
-                         block: AudioRecorder.makeTapBlock(converter: converter, target: target, inputFormat: inputFormat, sink: sink))
-        // Added before start so a change during startup is not missed.
-        let observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
-                                                              queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.handleConfigurationChange() }
-        }
-        do {
-            engine.prepare()
-            try engine.start()
-        } catch {
-            NotificationCenter.default.removeObserver(observer)
-            input.removeTap(onBus: 0)
-            throw AudioRecorder.RecorderError.engine(error.localizedDescription)
-        }
-        self.engine = engine
-        self.observer = observer
-        tapFormat = inputFormat
-        log.info("Recording started (\(inputFormat.sampleRate, privacy: .public) Hz input)")
-    }
-
-    /// macOS can post this for changes that did not affect a running engine (often as the engine starts).
-    /// Rebuilding then would be the glitch this class exists to prevent.
-    private func handleConfigurationChange() {
-        guard let engine else { return }
-        let format = engine.inputNode.outputFormat(forBus: 0)
-        if engine.isRunning, let tapFormat, format.sampleRate == tapFormat.sampleRate, format.channelCount == tapFormat.channelCount {
-            log.debug("Configuration change ignored: engine still running with the same format")
-            return
-        }
-        onConfigurationChange?()
-    }
-
-    func stop() {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
-        observer = nil
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
-        engine = nil
-        tapFormat = nil
     }
 }

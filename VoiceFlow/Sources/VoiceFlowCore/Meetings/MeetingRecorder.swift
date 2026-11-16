@@ -11,10 +11,13 @@ public protocol MeetingAudioSource: AnyObject {
     func drainSamples() -> [Float]
     /// Tries to bring back a source that stopped delivering audio.
     func restartCapture()
+    /// 0...1 level of the last 50 ms, read without taking the samples (live meters between ticks).
+    func currentLevel() -> Float?
 }
 
 public extension MeetingAudioSource {
     func restartCapture() {}
+    func currentLevel() -> Float? { nil }
 }
 
 /// The microphone as a meeting source.
@@ -30,6 +33,7 @@ final class MicSource: MeetingAudioSource {
     func stopCapture() { recorder.stop() }
     func drainSamples() -> [Float] { recorder.drain() }
     func restartCapture() { recorder.restartMicrophone() }
+    func currentLevel() -> Float? { recorder.currentLevel() }
 }
 
 @available(macOS 14.2, *)
@@ -37,6 +41,7 @@ extension SystemAudioCapture: MeetingAudioSource {
     public func startCapture() throws { try start() }
     public func stopCapture() { stop() }
     public func drainSamples() -> [Float] { drain() }
+    public func currentLevel() -> Float? { AudioMath.level(buffer.tail(800)[...]) }
 }
 
 /// Records a meeting: your microphone and the call, transcribed separately while it happens.
@@ -124,6 +129,11 @@ public final class MeetingRecorder {
     public private(set) var callLanguage: String?
     /// Seconds in a row the meeting audio has been digital silence (often: system audio permission missing).
     public private(set) var systemSilentSeconds = 0
+    /// Seconds of this meeting in which the meeting audio carried any sound. Zero for a long time means the
+    /// permission is missing or the call plays somewhere VoiceFlow can't hear.
+    public private(set) var systemHeardSeconds = 0
+    /// Whether meeting audio is being recorded at all.
+    public var recordsSystemAudio: Bool { system != nil }
     /// Whether the microphone is delivering usable audio. A meeting keeps recording through any of these.
     public private(set) var micHealth: MicHealthState = .healthy
     /// Seconds of this meeting with no usable microphone audio.
@@ -151,6 +161,25 @@ public final class MeetingRecorder {
                 .transcribeResolving(wav: wav, plan: plan, prompts: settings.prompts, mode: .sequential(hint: request.hint),
                                      priority: .background, wordTimestamps: true)
         }
+    }
+
+    /// The real microphone and system audio with a different transcriber (the audio self-test, which must not use the network).
+    public convenience init(transcribe: @escaping Transcribe) {
+        self.init(mic: { settings in MicSource(deviceUID: settings.micDeviceUID) },
+                  system: {
+                      if #available(macOS 14.2, *) { return SystemAudioCapture() }
+                      return nil
+                  },
+                  retryDelay: { Double($0) * 2 }, transcribe: transcribe)
+    }
+
+    /// Chunks handed to the transcriber on each side during this meeting.
+    public private(set) var chunksSent: [Speaker: Int] = [:]
+
+    /// The system-audio tap's state, when it is running.
+    public var systemDiagnostics: SystemAudioDiagnostics? {
+        if #available(macOS 14.2, *), let capture = system as? SystemAudioCapture { return capture.diagnostics }
+        return nil
     }
 
     /// For tests: simulated sources and transcription.
@@ -187,10 +216,12 @@ public final class MeetingRecorder {
         isRecording = true
         heardSpeech = false
         systemSilentSeconds = 0
+        systemHeardSeconds = 0
         micMonitor = MicHealthMonitor()
         micHealth = .healthy
         micMissingSeconds = 0
         micRestartsRequested = 0
+        chunksSent = [:]
         queuedMic = []; queuedSystem = []
         micSide = Side(); callSide = Side()
         uploads = []
@@ -235,6 +266,13 @@ public final class MeetingRecorder {
         return meeting
     }
 
+    /// Updates the live levels from the newest audio without taking it. Call it as often as the meters redraw.
+    public func refreshLevels() {
+        guard isRecording else { return }
+        if let level = mic?.currentLevel() { micLevel = level }
+        if let level = system?.currentLevel() { systemLevel = level }
+    }
+
     func tick(final: Bool = false) {
         let newMic = mic?.drainSamples() ?? []
         queuedMic.append(contentsOf: newMic)
@@ -245,7 +283,9 @@ public final class MeetingRecorder {
         if let system {
             let newSystem = system.drainSamples()
             systemLevel = AudioMath.level(newSystem.suffix(1_600)[...])
-            systemSilentSeconds = newSystem.allSatisfy { $0 == 0 } ? systemSilentSeconds + 1 : 0
+            let silent = newSystem.allSatisfy { $0 == 0 }
+            systemSilentSeconds = silent ? systemSilentSeconds + 1 : 0
+            if !silent { systemHeardSeconds += 1 }
             queuedSystem.append(contentsOf: newSystem)
             // Keep the two sides on one clock. Whichever stalls (mic restarting, output device changing) is padded.
             let twoSeconds = Int(AudioMath.sampleRate) * 2
@@ -296,6 +336,7 @@ public final class MeetingRecorder {
     private func send(_ chunk: AudioChunk, speaker: Speaker) {
         guard let settings else { return }
         heardSpeech = true
+        chunksSent[speaker, default: 0] += 1
         let request = request(for: speaker, settings: settings)
         let wav = AudioMath.wav(AudioMath.normalized(chunk.samples))
         let transcribe = self.transcribe

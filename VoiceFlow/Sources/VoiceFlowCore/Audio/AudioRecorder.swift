@@ -87,28 +87,6 @@ public final class AudioRecorder {
     /// Asks for the microphone to be rebuilt after it stalled. Other recorders stay attached.
     public func restartMicrophone() { microphone.restart() }
 
-    /// The tap block runs on a CoreAudio thread, never the main thread. It is built in a nonisolated
-    /// static function so Swift does not infer main-actor isolation for it; an isolated block traps
-    /// at runtime the first time CoreAudio calls it.
-    nonisolated static func makeTapBlock(converter: AVAudioConverter, target: AVAudioFormat,
-                                         inputFormat: AVAudioFormat, sink: any SampleSink) -> AVAudioNodeTapBlock {
-        { pcm, _ in
-            let ratio = target.sampleRate / inputFormat.sampleRate
-            let capacity = AVAudioFrameCount(Double(pcm.frameLength) * ratio) + 32
-            guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-            let fed = Flag()
-            var error: NSError?
-            converter.convert(to: out, error: &error) { _, status in
-                if fed.value { status.pointee = .noDataNow; return nil }
-                fed.value = true
-                status.pointee = .haveData
-                return pcm
-            }
-            guard error == nil, let channel = out.floatChannelData?[0] else { return }
-            sink.append(Array(UnsafeBufferPointer(start: channel, count: Int(out.frameLength))))
-        }
-    }
-
     /// Stops capture and returns everything recorded.
     @discardableResult
     public func stop() -> [Float] {
