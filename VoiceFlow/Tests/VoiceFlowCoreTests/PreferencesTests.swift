@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import VoiceFlowCore
@@ -21,6 +22,8 @@ struct PreferencesTests {
         #expect(prefs.languages == ["en"])
         #expect(!prefs.debugLogging)
         #expect(!prefs.showBarWhenIdle)   // the Flow bar appears only while dictating
+        #expect(prefs.flowBarDraggable)
+        #expect(prefs.flowBarSpots.isEmpty)  // bottom centre until dragged
     }
 
     @Test func everyFieldRoundTrips() {
@@ -39,6 +42,8 @@ struct PreferencesTests {
         prefs.historyRetentionDays = -1
         prefs.launchAtLogin = true
         prefs.debugLogging = true
+        prefs.flowBarDraggable = false
+        prefs.flowBarSpots.set(CGPoint(x: 420, y: 300), for: "0,0,1512x982")
 
         store.save(prefs)
         #expect(store.load() == prefs)
@@ -54,6 +59,25 @@ struct PreferencesTests {
         #expect(prefs.onboarded)
         #expect(prefs.checkForUpdates)
         #expect(prefs.dismissedUpdateVersion == "")
+    }
+
+    /// Preferences saved before the Flow bar could move still decode: draggable, at the bottom centre.
+    @Test func olderStoredPreferencesGetFlowBarDefaults() throws {
+        let old = #"{"hotkey":"fn","showBarWhenIdle":true,"onboarded":true,"checkForUpdates":false}"#
+        let prefs = try JSONDecoder().decode(Preferences.self, from: Data(old.utf8))
+        #expect(prefs.showBarWhenIdle)
+        #expect(!prefs.checkForUpdates)
+        #expect(prefs.flowBarDraggable)
+        #expect(prefs.flowBarSpots.isEmpty)
+    }
+
+    /// A damaged spot list resets only the bar's position, never the other settings.
+    @Test func damagedFlowBarSpotsKeepOtherSettings() throws {
+        let stored = #"{"hotkey":"rightOption","flowBarSpots":{"x":1},"flowBarDraggable":false}"#
+        let prefs = try JSONDecoder().decode(Preferences.self, from: Data(stored.utf8))
+        #expect(prefs.hotkey == .rightOption)
+        #expect(!prefs.flowBarDraggable)
+        #expect(prefs.flowBarSpots.isEmpty)
     }
 
     @Test func missingStoreGivesDefaults() {

@@ -45,6 +45,7 @@ final class WindowManager {
         model.pill.onLanguage = { [weak model] code in model?.setSingleLanguage(code) }
         model.pill.currentLanguages = { [weak model] in model?.preferences.languages ?? [] }
         model.pill.onStopMeeting = { [weak model] in model?.notetaker.stop() }
+        model.pill.onMoved = { [weak model] spots in model?.preferences.flowBarSpots = spots }
         if model.preferences.onboarded { showHub(.home) } else { showOnboarding() }
     }
 

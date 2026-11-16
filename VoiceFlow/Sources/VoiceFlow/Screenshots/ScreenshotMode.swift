@@ -167,8 +167,11 @@ private struct FlowBarGallery: View {
     private func tile(_ title: String, _ state: PillState, width: CGFloat = 360, height: CGFloat = 54) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(title).font(TypeScale.callout.weight(.medium)).foregroundStyle(.white)
-            FlowBarView(state: state)
-                .frame(width: width, height: height)
+            VStack(spacing: FlowBarGeometry.toastGap) {
+                if state.messageVisible { ToastView(state: state) }
+                FlowBarView(state: state).frame(height: 54)
+            }
+            .frame(width: width, height: height, alignment: .bottom)
         }
     }
 
@@ -187,7 +190,7 @@ private struct FlowBarGallery: View {
                     $0.phase = .listening
                     $0.show("Pasted into Notes", detail: "Copied to the clipboard too.",
                             action: .init(title: "Undo") {}, seconds: 600)
-                }, height: 96)
+                }, height: 130)
                 tile("Meeting chip", state { $0.meetingSince = Date().addingTimeInterval(-720) })
             }
         }

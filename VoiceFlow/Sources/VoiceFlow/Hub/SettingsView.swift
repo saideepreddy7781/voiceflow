@@ -369,6 +369,14 @@ private struct SystemSettings: View {
             SettingToggle(title: model.flowBarHiddenForHour ? "Show Flow Bar at all times (hidden for one hour)" : "Show Flow Bar at all times",
                           detail: "Off by default: the bar appears only while you dictate or when VoiceFlow has something to tell you. Right-click the resting bar to hide it for an hour or switch language.",
                           isOn: $model.preferences.showBarWhenIdle)
+            SettingToggle(title: "Drag the Flow Bar to move it",
+                          detail: "VoiceFlow remembers the spot for each display setup. Clicks next to the bar reach the app behind it.",
+                          isOn: $model.preferences.flowBarDraggable)
+            SettingRow(title: "Position", detail: model.preferences.flowBarSpots.isEmpty ? "Bottom centre, above the Dock." : "Moved by you.") {
+                Button("Reset position") { model.preferences.flowBarSpots = FlowBarSpots() }
+                    .buttonStyle(.vf(.secondary, compact: true))
+                    .disabled(model.preferences.flowBarSpots.isEmpty)
+            }
         }
         SettingsGroup("Sound") {
             SettingToggle(title: "Play a sound when dictation starts", isOn: $model.preferences.playSounds)
