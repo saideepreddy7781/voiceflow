@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
 using NAudio.Wave;
 using VoiceFlow.Core.Audio;
 using VoiceFlow.Core.Meetings;
@@ -52,6 +53,27 @@ internal static class AudioDevices
         return enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
     }
 
+    /// <summary>
+    /// Whether Windows has this microphone muted or at zero volume, which makes every app receive exact zeros. Some
+    /// call apps' mute buttons and headset mute switches set it. Null when Windows would not say.
+    /// </summary>
+    public static bool? MicrophoneMuted(string? id)
+    {
+        try
+        {
+            return WasapiEndpointSource.Mta(() =>
+            {
+                using var device = Microphone(id);
+                var volume = device.AudioEndpointVolume;
+                return volume.Mute || volume.MasterVolumeLevelScalar <= 0f;
+            });
+        }
+        catch (Exception e) when (e is COMException or AudioCaptureException or UnauthorizedAccessException or InvalidCastException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The default speakers or headset, for loopback. The caller disposes it.</summary>
     public static MMDevice DefaultOutput()
     {
@@ -66,10 +88,36 @@ internal sealed class AudioCaptureException(string message, Exception? inner = n
 
 internal static class AudioCapture
 {
+    // AUDCLNT_E_* results that have their own message.
+    internal const uint DeviceInvalidated = 0x88890004;
+    internal const uint DeviceInUse = 0x8889000A;
+    internal const uint ServiceNotRunning = 0x88890010;
+
+    internal const string ExclusiveMicrophone =
+        "Another app has taken your microphone for itself (exclusive mode). Close that app, or turn off \"Allow applications to take exclusive control\" in the microphone's Sound properties.";
+    internal const string ExclusiveSpeakers =
+        "Another app has taken your speakers for itself (exclusive mode), so the meeting audio can't be recorded.";
+
+    /// <summary>Why Windows ended a running stream, as an error with the message the user sees.</summary>
+    internal static AudioCaptureException Disconnected(AudioSessionDisconnectReason reason, bool loopback) => reason switch
+    {
+        AudioSessionDisconnectReason.DisconnectReasonExclusiveModeOverride => new(loopback ? ExclusiveSpeakers : ExclusiveMicrophone),
+        AudioSessionDisconnectReason.DisconnectReasonFormatChanged => new($"The {(loopback ? "speaker" : "microphone")} format changed in Sound settings."),
+        AudioSessionDisconnectReason.DisconnectReasonDeviceRemoval => new($"The {(loopback ? "speakers or headset were" : "microphone was")} disconnected."),
+        AudioSessionDisconnectReason.DisconnectReasonServerShutdown => new("The Windows Audio service stopped."),
+        _ => new($"Windows ended the {(loopback ? "speaker audio" : "microphone")} stream."),
+    };
+
     /// <summary>Turns a start failure into the message the user sees.</summary>
     internal static AudioCaptureException Translate(Exception e, bool loopback)
     {
         if (e is AudioCaptureException known) return known;
+        switch ((uint)e.HResult)
+        {
+            case DeviceInUse: return new AudioCaptureException(loopback ? ExclusiveSpeakers : ExclusiveMicrophone, e);
+            case ServiceNotRunning: return new AudioCaptureException("The Windows Audio service isn't running. Restart the PC, or start \"Windows Audio\" in Services.", e);
+            case DeviceInvalidated: return new AudioCaptureException($"The {(loopback ? "speakers or headset" : "microphone")} changed or disconnected while starting.", e);
+        }
         // NAudio raises HRESULTs through Marshal.ThrowExceptionForHR, which turns E_ACCESSDENIED (the microphone
         // privacy switch) into UnauthorizedAccessException, not COMException.
         if (!loopback && (e is UnauthorizedAccessException || (uint)e.HResult == 0x80070005))

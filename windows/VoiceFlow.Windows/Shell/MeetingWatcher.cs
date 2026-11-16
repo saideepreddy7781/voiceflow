@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia.Threading;
-using Microsoft.Win32;
 using VoiceFlow.Core.Meetings;
+using VoiceFlow.Windows.Audio;
 using VoiceFlow.Windows.Dictation;
 using VoiceFlow.Windows.Meetings;
 using VoiceFlow.Windows.Native;
@@ -41,7 +41,7 @@ internal sealed class MeetingWatcher : IDisposable
         _scanning = true;
         try
         {
-            var app = await Task.Run(() => MeetingDetector.Detect(VisibleWindows(), MicrophoneInUse()));
+            var app = await Task.Run(() => MeetingDetector.Detect(VisibleWindows(), AudioSessions.AnotherAppIsRecording()));
             if (app == null)
             {
                 _offeredThisCall = false;   // the call ended; offer again next time
@@ -79,35 +79,6 @@ internal sealed class MeetingWatcher : IDisposable
             return true;
         }, IntPtr.Zero);
         return windows;
-    }
-
-    /// <summary>
-    /// Whether another app has the microphone open, from the same registry data that drives the privacy indicator in
-    /// the taskbar. VoiceFlow's own use does not count. Null when Windows would not say.
-    /// </summary>
-    static bool? MicrophoneInUse()
-    {
-        const string Root = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(Root);
-            if (key == null) return null;
-            var self = AppPaths.ExePath.Replace('\\', '#');
-            using var nonPackaged = key.OpenSubKey("NonPackaged");
-            return AnyInUse(key, null) || (nonPackaged != null && AnyInUse(nonPackaged, self));
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return null; }
-    }
-
-    static bool AnyInUse(RegistryKey parent, string? self)
-    {
-        foreach (var name in parent.GetSubKeyNames())
-        {
-            if (name == "NonPackaged" || string.Equals(name, self, StringComparison.OrdinalIgnoreCase)) continue;
-            using var app = parent.OpenSubKey(name);
-            if (app?.GetValue("LastUsedTimeStop") is long stop && stop == 0 && app.GetValue("LastUsedTimeStart") is long start && start != 0) return true;
-        }
-        return false;
     }
 
     public void Dispose() => _timer.Stop();

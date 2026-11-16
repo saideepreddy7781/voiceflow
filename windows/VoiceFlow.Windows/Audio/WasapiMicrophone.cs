@@ -148,14 +148,22 @@ internal sealed class WasapiLoopbackSource : WasapiEndpointSource, IMicrophoneSo
     }
 }
 
-/// <summary>One WASAPI capture stream, microphone or loopback, converted to 16 kHz mono. Takes ownership of the device.</summary>
-internal sealed class WasapiMicrophone(MMDevice device, bool loopback = false) : IMicrophoneDevice
+/// <summary>
+/// One WASAPI capture stream, microphone or loopback, converted to 16 kHz mono. Takes ownership of the device.
+///
+/// Windows ends a shared-mode stream when another app takes the device in exclusive mode, when the device's format
+/// is changed in Sound settings, or when the device goes away. The audio session reports which of these happened,
+/// and any of them raises <see cref="Lost"/>, so <see cref="SharedMicrophone"/> rebuilds the capture on the device's
+/// new format, or says why it can't.
+/// </summary>
+internal sealed class WasapiMicrophone(MMDevice device, bool loopback = false) : IMicrophoneDevice, IAudioSessionEventsHandler
 {
     WasapiCapture? _capture;
-    StreamingResampler? _resampler;
-    int _bits;
-    bool _isFloat;
+    AudioSessionControl? _session;
+    readonly CaptureConverter _converter = new(oneChannel: !loopback);
+    CaptureFormat _format;
     volatile bool _stopping;
+    int _lostRaised;
 
     public string Id { get; } = device.ID;
     public string Name { get; } = device.FriendlyName;
@@ -168,15 +176,12 @@ internal sealed class WasapiMicrophone(MMDevice device, bool loopback = false) :
         try
         {
             _capture = loopback ? new WasapiLoopbackCapture(device) : new WasapiCapture(device, useEventSync: true, audioBufferMillisecondsLength: 100);
-            var format = _capture.WaveFormat;
-            _bits = format.BitsPerSample;
-            _isFloat = format.Encoding == WaveFormatEncoding.IeeeFloat
-                       || (format is WaveFormatExtensible ext && ext.SubFormat == NAudio.Dmo.AudioMediaSubtypes.MEDIASUBTYPE_IEEE_FLOAT);
-            _resampler = new StreamingResampler(format.SampleRate, format.Channels);
+            _format = FormatOf(_capture.WaveFormat);
             _capture.DataAvailable += OnData;
             _capture.RecordingStopped += OnStopped;
             _capture.StartRecording();
-            Logger.Info($"{(loopback ? "Loopback" : "Microphone")} started ({format.SampleRate} Hz, {format.Channels} ch, {_bits}-bit{(_isFloat ? " float" : "")})");
+            WatchSession();
+            Logger.Info($"{(loopback ? "Loopback" : "Microphone")} started ({_format.SampleRate} Hz, {_format.Channels} ch, {_format.BitsPerSample}-bit{(_format.IsFloat ? " float" : "")})");
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -185,13 +190,35 @@ internal sealed class WasapiMicrophone(MMDevice device, bool loopback = false) :
         }
     });
 
+    internal static CaptureFormat FormatOf(WaveFormat format) => new(
+        format.SampleRate, format.Channels, format.BitsPerSample,
+        format.Encoding == WaveFormatEncoding.IeeeFloat
+        || (format is WaveFormatExtensible ext && ext.SubFormat == NAudio.Dmo.AudioMediaSubtypes.MEDIASUBTYPE_IEEE_FLOAT));
+
+    /// <summary>Listens to this process's session on the device, which carries the reason a stream was ended.</summary>
+    void WatchSession()
+    {
+        try
+        {
+            _session = device.AudioSessionManager.AudioSessionControl;
+            _session.RegisterEventClient(this);
+        }
+        catch (Exception e) when (e is COMException or InvalidCastException or InvalidOperationException or NotImplementedException)
+        {
+            // Loss still arrives through RecordingStopped and the stall check.
+            Logger.Warn($"Audio session events are unavailable (0x{e.HResult:X8})");
+            _session = null;
+        }
+    }
+
     void OnData(object? sender, WaveInEventArgs e)
     {
         try
         {
-            if (e.BytesRecorded <= 0 || _resampler == null) return;
-            var floats = PcmDecoder.ToFloat(e.Buffer.AsSpan(0, e.BytesRecorded), _bits, _isFloat);
-            var mono = _resampler.Process(floats);
+            if (e.BytesRecorded <= 0) return;
+            // The format is read for every buffer, so the converter follows any change.
+            var format = sender is IWaveIn capture ? FormatOf(capture.WaveFormat) : _format;
+            var mono = _converter.Convert(e.Buffer.AsSpan(0, e.BytesRecorded), format);
             if (mono.Length > 0) Samples?.Invoke(mono);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -203,9 +230,28 @@ internal sealed class WasapiMicrophone(MMDevice device, bool loopback = false) :
     void OnStopped(object? sender, StoppedEventArgs e)
     {
         if (_stopping) return;
-        if (e.Exception != null) Logger.Warn($"Windows stopped the {(loopback ? "loopback" : "microphone")}: {e.Exception.GetType().Name}");
-        Lost?.Invoke(e.Exception);
+        if (e.Exception != null) Logger.Warn($"Windows stopped the {(loopback ? "loopback" : "microphone")}: {e.Exception.GetType().Name} (0x{e.Exception.HResult:X8})");
+        RaiseLost(e.Exception == null ? null : AudioCapture.Translate(e.Exception, loopback));
     }
+
+    void RaiseLost(Exception? error)
+    {
+        if (_stopping || Interlocked.Exchange(ref _lostRaised, 1) == 1) return;
+        Lost?.Invoke(error);
+    }
+
+    // Session events arrive on a Windows thread; they only flag the loss.
+    void IAudioSessionEventsHandler.OnSessionDisconnected(AudioSessionDisconnectReason reason)
+    {
+        Logger.Warn($"Windows ended the {(loopback ? "loopback" : "microphone")} session: {reason}");
+        RaiseLost(AudioCapture.Disconnected(reason, loopback));
+    }
+    void IAudioSessionEventsHandler.OnVolumeChanged(float volume, bool isMuted) { }
+    void IAudioSessionEventsHandler.OnDisplayNameChanged(string displayName) { }
+    void IAudioSessionEventsHandler.OnIconPathChanged(string iconPath) { }
+    void IAudioSessionEventsHandler.OnChannelVolumeChanged(uint channelCount, IntPtr newVolumes, uint channelIndex) { }
+    void IAudioSessionEventsHandler.OnGroupingParamChanged(ref Guid groupingId) { }
+    void IAudioSessionEventsHandler.OnStateChanged(AudioSessionState state) { }
 
     public void Stop() => WasapiMicrophoneSource.Mta(() =>
     {
@@ -215,6 +261,16 @@ internal sealed class WasapiMicrophone(MMDevice device, bool loopback = false) :
 
     void Release()
     {
+        if (_session != null)
+        {
+            try
+            {
+                _session.UnRegisterEventClient(this);
+                _session.Dispose();
+            }
+            catch (Exception e) when (e is COMException or InvalidCastException or InvalidOperationException) { Logger.Warn($"Stopping session events: {e.GetType().Name}"); }
+            _session = null;
+        }
         if (_capture != null)
         {
             _capture.DataAvailable -= OnData;
@@ -257,5 +313,7 @@ internal sealed class SharedMicMeetingSource(SharedMicrophone microphone, string
     public void StopCapture() => _subscription?.Dispose();
     public float[] DrainSamples() => _subscription?.Drain() ?? [];
     public double DrainGapSeconds() => _subscription?.DrainGapSeconds() ?? 0;
+    // Too little audio since the last drain reads as silence and would make the meter flicker.
+    public float? CurrentLevel() => _subscription is { SampleCount: >= 800 } s ? s.CurrentLevel() : null;
     public void Dispose() => _subscription?.Dispose();
 }

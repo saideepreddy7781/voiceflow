@@ -38,14 +38,27 @@ public enum MicHealthStatus
 }
 
 /// <param name="QuietRoom">Audio is arriving and is simply quiet. Healthy, nothing to report.</param>
-public sealed record MicHealthSnapshot(MicHealthStatus Status, string DeviceName, bool QuietRoom, int RestartCount);
+/// <param name="Problem">Why the device last failed to start, in words for the user, while it is still failing.</param>
+public sealed record MicHealthSnapshot(MicHealthStatus Status, string DeviceName, bool QuietRoom, int RestartCount, string? Problem = null);
 
 public sealed record MicDiagnostics(int Restarts, int DeviceSwitches, int Stalls, int DeadSignals, int FailedStarts, string CurrentDevice, string? LastFailure);
 
+/// <summary>
+/// The health timings. They match macOS: a problem gets one quick rebuild, and if that does not fix it the user is told
+/// within seconds, while the meeting is still on and can be fixed. Rebuilds then continue quietly, so a reconnected
+/// microphone comes back by itself.
+/// </summary>
 public sealed record SharedMicrophoneOptions
 {
-    public TimeSpan StallAfter { get; init; } = TimeSpan.FromSeconds(3);
-    public TimeSpan DeadAfter { get; init; } = TimeSpan.FromSeconds(8);
+    /// <summary>No frames for this long rebuilds the device.</summary>
+    public TimeSpan StallAfter { get; init; } = TimeSpan.FromSeconds(2);
+    /// <summary>Exact zeros for this long rebuilds the device. Longer than a stall: a headset mute button also sends zeros.</summary>
+    public TimeSpan DeadAfter { get; init; } = TimeSpan.FromSeconds(3);
+    /// <summary>After the first rebuild, how long the problem may last before it is reported and the device rebuilt again.</summary>
+    public TimeSpan ReportAfter { get; init; } = TimeSpan.FromSeconds(3);
+    /// <summary>Quiet rebuilds once reported: the first soon, then twice a minute.</summary>
+    public TimeSpan FirstRetry { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan LaterRetry { get; init; } = TimeSpan.FromSeconds(30);
     public TimeSpan QuietAfter { get; init; } = TimeSpan.FromSeconds(3);
     /// <summary>Wait before each retry of a failed start. The last value repeats.</summary>
     public IReadOnlyList<TimeSpan> RetryDelays { get; init; } =
@@ -99,17 +112,24 @@ public sealed class SharedMicrophone : IDisposable
     TimeSpan? _deadSince;
     TimeSpan? _quietSince;
     long _framesThisStart;
-    long _liveFramesThisStart;
     TimeSpan? _gapStartedAt;
 
     MicHealthStatus _status = MicHealthStatus.Idle;
     int _failedAttempts;
     TimeSpan _nextAttemptAt;
-    bool _deadEpisode;
     bool _failedRaised;
+
+    /// <summary>A running device that sends nothing or exact zeros: one episode, from detection until audio is back.</summary>
+    enum Problem { None, Stall, Dead }
+    Problem _problem;
+    int _problemRebuilds;
+    TimeSpan _nextRebuildAt;
+    bool _problemReported;
 
     int _restarts, _switches, _stalls, _deadSignals, _failedStarts;
     string? _lastFailure;
+    /// <summary>The last start failure's message, for the user. Cleared when a device starts.</summary>
+    string? _failureMessage;
 
     /// <summary>Raised outside all locks, on the health-check thread.</summary>
     public event Action<MicHealthSnapshot>? HealthChanged;
@@ -235,7 +255,7 @@ public sealed class SharedMicrophone : IDisposable
         {
             var error = _lostError;
             _log?.Invoke($"Microphone lost: {error?.GetType().Name ?? "no error given"}");
-            Restart(now, notify, MicHealthStatus.Recovering, switching: false);
+            Restart(now, notify, switching: false);
             return;
         }
 
@@ -255,67 +275,124 @@ public sealed class SharedMicrophone : IDisposable
             if (target == null || target != _device.Id)
             {
                 _log?.Invoke("Microphone changed: following the current device");
-                Restart(now, notify, MicHealthStatus.Recovering, switching: true);
+                Restart(now, notify, switching: true);
                 return;
             }
         }
 
         TimeSpan lastFrame;
         TimeSpan? deadSince;
-        long frames, liveFrames;
+        long frames;
         lock (_fanout)
         {
             lastFrame = _lastFrameAt;
             deadSince = _deadSince;
             frames = _framesThisStart;
-            liveFrames = _liveFramesThisStart;
         }
+        var stalled = now - lastFrame >= _options.StallAfter;
+        var flowing = frames > 0 && deadSince == null && !stalled;
 
-        if (now - lastFrame >= _options.StallAfter)
+        if (_problem == Problem.None)
         {
-            if (now < _nextAttemptAt) return;
-            _stalls++;
-            _log?.Invoke("Microphone stalled: no audio arriving");
-            SetStatus(MicHealthStatus.Stalled, notify);
-            Restart(now, notify, MicHealthStatus.Stalled, switching: false, stalled: true);
-            return;
-        }
-
-        if (deadSince is { } since && now - since >= _options.DeadAfter)
-        {
-            if (!_deadEpisode)
+            var dead = deadSince is { } since && now - since >= _options.DeadAfter;
+            if (stalled || dead)
             {
-                _deadEpisode = true;
-                _deadSignals++;
-                _log?.Invoke("Microphone delivers digital silence");
-                SetStatus(MicHealthStatus.DeadSignal, notify);
-                // One restart per episode, and only for a device that never produced sound since it started.
-                // A live mic that went flat is muted or noise-gated, and restarting can't change that.
-                if (liveFrames == 0) Restart(now, notify, MicHealthStatus.DeadSignal, switching: false);
+                _problem = stalled ? Problem.Stall : Problem.Dead;
+                _problemRebuilds = 0;
+                _problemReported = false;
+                if (stalled) _stalls++;
+                _log?.Invoke(stalled ? "Microphone stalled: no audio arriving" : "Microphone delivers digital silence");
+                if (stalled) SetStatus(MicHealthStatus.Stalled, notify);
+                Rebuild(now, notify);
+                return;
+            }
+            if (flowing)
+            {
+                _failedAttempts = 0;
+                _failedRaised = false;
+                SetStatus(MicHealthStatus.Healthy, notify);
             }
             return;
         }
 
-        if (frames > 0 && deadSince == null)
+        if (flowing)
         {
-            _deadEpisode = false;
+            _log?.Invoke("Microphone audio is back");
+            EndProblem();
             _failedAttempts = 0;
             _failedRaised = false;
             SetStatus(MicHealthStatus.Healthy, notify);
+            return;
+        }
+        if (now < _nextRebuildAt) return;
+        // Still no usable audio after a rebuild: say so once, then keep rebuilding quietly.
+        _problem = deadSince != null && frames > 0 ? Problem.Dead : Problem.Stall;
+        if (!_problemReported)
+        {
+            _problemReported = true;
+            if (_problem == Problem.Dead)
+            {
+                _deadSignals++;
+                _log?.Invoke("Microphone still delivers digital silence after a rebuild");
+                SetStatus(MicHealthStatus.DeadSignal, notify);
+            }
+            else
+            {
+                _log?.Invoke("Microphone restarted but delivers no audio");
+                SetStatus(MicHealthStatus.Failed, notify);
+                RaiseFailedOnce(notify);
+            }
+        }
+        Rebuild(now, notify);
+    }
+
+    /// <summary>Rebuilds a running device that has a problem, and schedules the next rebuild of the episode.</summary>
+    void Rebuild(TimeSpan now, List<Action> notify)
+    {
+        lock (_fanout) _gapStartedAt ??= _lastFrameAt;
+        StopDevice();
+        _problemRebuilds++;
+        _nextRebuildAt = now + _problemRebuilds switch
+        {
+            1 => _options.ReportAfter,
+            2 => _options.FirstRetry,
+            _ => _options.LaterRetry,
+        };
+        if (_status is MicHealthStatus.Healthy) SetStatus(MicHealthStatus.Recovering, notify);
+        try
+        {
+            StartDevice(now);
+            _restarts++;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // The device can't open at all now: the start-failure retries take over.
+            EndProblem();
+            NoteFailure(e);
+            RegisterFailure(now, notify);
         }
     }
 
-    void Restart(TimeSpan now, List<Action> notify, MicHealthStatus during, bool switching, bool stalled = false)
+    void EndProblem()
+    {
+        _problem = Problem.None;
+        _problemRebuilds = 0;
+        _problemReported = false;
+    }
+
+    /// <summary>The device went away or the default moved: rebuild now. Ends any problem episode.</summary>
+    void Restart(TimeSpan now, List<Action> notify, bool switching)
     {
         lock (_fanout) _gapStartedAt ??= _lastFrameAt;
         StopDevice();
         _lost = false;
         _lostError = null;
-        SetStatus(during == MicHealthStatus.DeadSignal ? MicHealthStatus.DeadSignal : MicHealthStatus.Recovering, notify);
-        TryRestart(now, notify, switching, stalled);
+        EndProblem();
+        SetStatus(MicHealthStatus.Recovering, notify);
+        TryRestart(now, notify, switching);
     }
 
-    void TryRestart(TimeSpan now, List<Action> notify, bool switching, bool stalled = false)
+    void TryRestart(TimeSpan now, List<Action> notify, bool switching)
     {
         try
         {
@@ -329,21 +406,23 @@ public sealed class SharedMicrophone : IDisposable
         }
         if (switching) _switches++;
         else _restarts++;
-        // A stalled device can restart cleanly and still deliver nothing, so it keeps counting as a failure
-        // until frames arrive.
-        if (stalled) RegisterFailure(now, notify, keepRunning: true);
     }
 
-    void RegisterFailure(TimeSpan now, List<Action> notify, bool keepRunning = false)
+    /// <summary>A start that failed. The second in a row is reported; retries continue with the delays in the options.</summary>
+    void RegisterFailure(TimeSpan now, List<Action> notify)
     {
         _failedAttempts++;
         var delays = _options.RetryDelays;
         _nextAttemptAt = now + delays[Math.Min(_failedAttempts - 1, delays.Count - 1)];
         if (_failedAttempts < 2) return;
         SetStatus(MicHealthStatus.Failed, notify);
+        RaiseFailedOnce(notify);
+    }
+
+    void RaiseFailedOnce(List<Action> notify)
+    {
         if (_failedRaised) return;
         _failedRaised = true;
-        if (keepRunning) _log?.Invoke("Microphone restarted but delivers no audio");
         MicSubscription[] subscribers;
         lock (_fanout) subscribers = _subscribers.ToArray();
         foreach (var subscriber in subscribers) notify.Add(subscriber.RaiseFailed);
@@ -353,6 +432,7 @@ public sealed class SharedMicrophone : IDisposable
     {
         _failedStarts++;
         _lastFailure = e.GetType().Name;
+        _failureMessage = e.Message;
         _log?.Invoke($"Microphone could not start: {e.GetType().Name}");
     }
 
@@ -366,13 +446,13 @@ public sealed class SharedMicrophone : IDisposable
         device.Start();
         _device = device;
         _deviceName = device.Name;
+        _failureMessage = null;
         lock (_fanout)
         {
             _lastFrameAt = now;
             _deadSince = null;
             _quietSince = null;
             _framesThisStart = 0;
-            _liveFramesThisStart = 0;
         }
     }
 
@@ -393,7 +473,8 @@ public sealed class SharedMicrophone : IDisposable
         _devicesChanged = false;
         _failedAttempts = 0;
         _failedRaised = false;
-        _deadEpisode = false;
+        _failureMessage = null;
+        EndProblem();
         _nextAttemptAt = TimeSpan.Zero;
         lock (_fanout)
         {
@@ -401,7 +482,6 @@ public sealed class SharedMicrophone : IDisposable
             _quietSince = null;
             _gapStartedAt = null;
             _framesThisStart = 0;
-            _liveFramesThisStart = 0;
         }
     }
 
@@ -424,7 +504,6 @@ public sealed class SharedMicrophone : IDisposable
             _framesThisStart += frames.Length;
             var dead = AudioMath.IsDigitalSilence(frames);
             _deadSince = dead ? _deadSince ?? now : null;
-            if (!dead) _liveFramesThisStart += frames.Length;
             var quiet = !dead && AudioMath.Dbfs(AudioMath.Rms(frames)) < -45;
             _quietSince = quiet ? _quietSince ?? now : null;
         }
@@ -450,7 +529,8 @@ public sealed class SharedMicrophone : IDisposable
     MicHealthSnapshot Snapshot(TimeSpan now)
     {
         var quiet = _status == MicHealthStatus.Healthy && _quietSince is { } since && now - since >= _options.QuietAfter;
-        return new MicHealthSnapshot(_status, _deviceName, quiet, _restarts + _switches);
+        var problem = _device == null && _status is MicHealthStatus.Failed or MicHealthStatus.Recovering ? _failureMessage : null;
+        return new MicHealthSnapshot(_status, _deviceName, quiet, _restarts + _switches, problem);
     }
 
     void Raise(List<Action> notify)

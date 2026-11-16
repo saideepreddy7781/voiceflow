@@ -163,6 +163,8 @@ public sealed class Preferences : IEquatable<Preferences>
     public string MeetingsFolder { get; set; } = "";
     public NotesLanguage MeetingsNotesLanguage { get; set; } = NotesLanguage.English;
     public bool MeetingsConsentReminder { get; set; } = true;
+    /// <summary>Stop recording by itself once the call has ended.</summary>
+    public bool MeetingsAutoStop { get; set; } = true;
 
     // System
     public bool ShowBarWhenIdle { get; set; } = false;
@@ -230,6 +232,7 @@ public sealed class Preferences : IEquatable<Preferences>
             ["meetingsFolder"] = MeetingsFolder,
             ["meetingsNotesLanguage"] = EnumText.Raw(MeetingsNotesLanguage),
             ["meetingsConsentReminder"] = MeetingsConsentReminder,
+            ["meetingsAutoStop"] = MeetingsAutoStop,
             ["showBarWhenIdle"] = ShowBarWhenIdle,
             ["flowBarPositions"] = new JsonArray(FlowBarPositions.Select(b => (JsonNode?)new JsonObject { ["layout"] = b.Layout, ["x"] = b.X, ["y"] = b.Y }).ToArray()),
             ["flowBarLocked"] = FlowBarLocked,
@@ -303,6 +306,7 @@ public sealed class Preferences : IEquatable<Preferences>
         p.MeetingsFolder = Str(o, "meetingsFolder") ?? p.MeetingsFolder;
         E<NotesLanguage>("meetingsNotesLanguage", v => p.MeetingsNotesLanguage = v);
         p.MeetingsConsentReminder = Bool(o, "meetingsConsentReminder") ?? p.MeetingsConsentReminder;
+        p.MeetingsAutoStop = Bool(o, "meetingsAutoStop") ?? p.MeetingsAutoStop;
         p.ShowBarWhenIdle = Bool(o, "showBarWhenIdle") ?? p.ShowBarWhenIdle;
         if (o["flowBarPositions"] is JsonArray positions)
         {

@@ -16,6 +16,7 @@ using VoiceFlow.Core.Diagnostics;
 using VoiceFlow.Core.FlowBar;
 using VoiceFlow.Core.Input;
 using VoiceFlow.Core.Library;
+using VoiceFlow.Core.Meetings;
 using VoiceFlow.Core.Speech;
 using VoiceFlow.Windows.Audio;
 using VoiceFlow.Windows.Dictation;
@@ -88,6 +89,10 @@ internal static class SelfTest
             Check("audio-devices", AudioDevicesCheck);
             Check("shared-capture", SharedCaptureCheck);
             Check("device-notifications", DeviceNotificationsCheck);
+            Check("audio-sessions", AudioSessionsCheck);
+            Check("call-end", CallEndCheck);
+            Check("capture-format-change", CaptureFormatChangeCheck);
+            Check("capture-errors", CaptureErrorsCheck);
             Check("real-microphone", RealMicrophoneCheck);
             Check("field-reading", FieldReadingCheck);
             Check("debug-report", () => DebugReportCheck(temp));
@@ -440,13 +445,19 @@ internal static class SelfTest
         hub.Poll();
         Assert(source.Opened.Count == 3 && hub.Diagnostics.DeviceSwitches == 1, "a default-device change did not switch");
 
-        for (int i = 0; i < 12; i++)
+        // Exact zeros, as the Mac microphone sent while a call app held it: rebuilt at 3 s, reported at 6 s.
+        var opened = source.Opened.Count;
+        var reportedAt = -1.0;
+        for (double t = 0.5; t <= 12; t += 0.5)
         {
             source.Latest!.Emit(frames);
-            now += TimeSpan.FromSeconds(1);
+            now += TimeSpan.FromSeconds(0.5);
             hub.Poll();
+            if (reportedAt < 0 && hub.Health.Status == MicHealthStatus.DeadSignal) reportedAt = t;
         }
         Assert(hub.Diagnostics.DeadSignals == 1, "digital silence was not reported as a dead microphone");
+        Assert(reportedAt is > 0 and <= 6.5, $"digital silence reported after {reportedAt} s");
+        Assert(source.Opened.Count - opened >= 2, "a silent microphone was not rebuilt");
 
         meeting.Dispose();
         Assert(!source.Latest!.Running && hub.Health.Status == MicHealthStatus.Idle, "the device kept running after the last subscriber left");
@@ -461,6 +472,84 @@ internal static class SelfTest
         source.EnsureNotifications();
         if (!source.NotificationsRegistered) throw new SkipException("the audio service refused registration (COM callback interface itself is fine)");
         return "COM callback built and registered with the audio service";
+    }
+
+    /// <summary>
+    /// The audio-session enumeration that decides whether a call app holds the microphone, on this machine's real
+    /// endpoints. CI runners have few or none, so this proves the COM path runs and fails soft, not what a call looks like.
+    /// </summary>
+    static string AudioSessionsCheck()
+    {
+        var capture = AudioSessions.Read(NAudio.CoreAudioApi.DataFlow.Capture, out var captureEndpoints);
+        var render = AudioSessions.Read(NAudio.CoreAudioApi.DataFlow.Render, out var renderEndpoints);
+        var another = AudioSessions.AnotherAppIsRecording();
+        if (capture == null && render == null) throw new SkipException("the audio service could not be asked for sessions");
+        var self = (uint)Environment.ProcessId;
+        Assert(capture == null || CaptureSessions.AnotherAppIsRecording(capture, self) is not null, "sessions were read but gave no answer");
+        return $"{captureEndpoints} capture endpoints with {capture?.Count ?? 0} sessions ({capture?.Count(c => c.Active) ?? 0} active), "
+               + $"{renderEndpoints} output endpoints with {render?.Count ?? 0} sessions; another app recording: {another?.ToString() ?? "unknown"}";
+    }
+
+    /// <summary>Auto-stop on simulated sessions: a call app records, lets go, and the call audio stops for a minute.</summary>
+    static string CallEndCheck()
+    {
+        var self = (uint)Environment.ProcessId;
+        var call = new CaptureSession[] { new(self, true), new(self + 1, true) };
+        var ended = new CaptureSession[] { new(self, true), new(self + 1, false), new(0, true) };
+        var detector = new CallEndDetector();
+        var stops = new List<double>();
+        for (double t = 0; t <= 300; t += 5)
+        {
+            var sessions = t < 120 ? call : ended;
+            var silent = t < 120 ? 0 : (int)(t - 120);
+            if (detector.Observe(t, CaptureSessions.AnotherAppIsRecording(sessions, self), silent)) stops.Add(t);
+        }
+        Assert(stops.SequenceEqual([180.0]), $"stopped at [{string.Join(", ", stops)}], expected [180]");
+        var alone = new CallEndDetector();
+        for (double t = 0; t <= 600; t += 5)
+            Assert(!alone.Observe(t, CaptureSessions.AnotherAppIsRecording([new(self, true)], self), (int)t), "a meeting with no call app stopped by itself");
+        return "stops 60 s after the call app lets go; VoiceFlow's own session and the system session never count as a call";
+    }
+
+    /// <summary>The per-buffer conversion, with the format changing under a running capture.</summary>
+    static string CaptureFormatChangeCheck()
+    {
+        var floatStereo = WasapiMicrophone.FormatOf(NAudio.Wave.WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2));
+        var pcmQuad = WasapiMicrophone.FormatOf(new NAudio.Wave.WaveFormat(44_100, 16, 4));
+        Assert(floatStereo == new CaptureFormat(48_000, 2, 32, true), $"float format read as {floatStereo}");
+        Assert(pcmQuad == new CaptureFormat(44_100, 4, 16, false), $"PCM format read as {pcmQuad}");
+        var converter = new CaptureConverter(oneChannel: true);
+        var before = 0;
+        var after = new List<float>();
+        for (int i = 0; i < 5; i++)
+        {
+            var frames = Enumerable.Range(0, 4_800).SelectMany(f => { var v = 0.3f * MathF.Sin(f * 0.04f); return new[] { v, -v }; }).ToArray();
+            before += converter.Convert(MemoryMarshal.AsBytes(frames.AsSpan()), floatStereo).Length;
+        }
+        for (int i = 0; i < 5; i++)
+        {
+            var pcm = Enumerable.Range(0, 4_410).SelectMany(f => Enumerable.Repeat((short)(9_000 * MathF.Sin(f * 0.04f)), 4)).SelectMany(BitConverter.GetBytes).ToArray();
+            after.AddRange(converter.Convert(pcm, pcmQuad));
+        }
+        Assert(converter.FormatChanges == 1, $"{converter.FormatChanges} format changes seen");
+        Assert(before is > 7_000 and <= 8_000 && after.Count is > 7_000 and <= 8_000, $"{before} and {after.Count} samples at 16 kHz");
+        var level = AudioMath.Dbfs(AudioMath.Rms(after.Skip(2_000).ToArray()));
+        Assert(level > -20, $"audio after the change at {level:F1} dBFS");
+        return $"48 kHz stereo float, then 44.1 kHz 4-channel PCM: {before} and {after.Count} samples, {level:F1} dBFS after the change";
+    }
+
+    /// <summary>The messages a user sees when a call app locks the microphone or the device goes away.</summary>
+    static string CaptureErrorsCheck()
+    {
+        var exclusive = AudioCapture.Translate(new COMException("in use", unchecked((int)AudioCapture.DeviceInUse)), loopback: false);
+        Assert(exclusive.Message == AudioCapture.ExclusiveMicrophone, "AUDCLNT_E_DEVICE_IN_USE did not explain exclusive mode");
+        var speakers = AudioCapture.Translate(new COMException("in use", unchecked((int)AudioCapture.DeviceInUse)), loopback: true);
+        Assert(speakers.Message == AudioCapture.ExclusiveSpeakers, "loopback exclusive mode was not explained");
+        var takeover = AudioCapture.Disconnected(NAudio.CoreAudioApi.Interfaces.AudioSessionDisconnectReason.DisconnectReasonExclusiveModeOverride, loopback: false);
+        Assert(takeover.Message == AudioCapture.ExclusiveMicrophone, "an exclusive-mode takeover was not explained");
+        var privacy = AudioCapture.Translate(new UnauthorizedAccessException(), loopback: false);
+        Assert(privacy.Message.StartsWith("Microphone access is off", StringComparison.Ordinal), "the privacy switch was not explained");
+        return "exclusive mode, exclusive takeover, privacy switch";
     }
 
     /// <summary>The real WASAPI path, when this machine has a microphone. CI runners don't, so this usually skips.</summary>
@@ -757,12 +846,31 @@ internal static class SelfTest
             return $"capsule fill on screen; {outside.Count} points around it show the window behind unchanged";
         }
 
+        /// <summary>
+        /// Another program's window at a test point (a runner's console, a notification) makes a click test
+        /// meaningless, so the check is skipped and the window named.
+        /// </summary>
+        string? ForeignWindowAt(int x, int y, bool expectBar)
+        {
+            var hit = WindowFromPoint(new POINT { X = x, Y = y });
+            var root = hit == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hit, GA_ROOT);
+            if (root == _host.Handle || (!expectBar && root == _behind.Handle)) return null;
+            var name = new StringBuilder(128);
+            if (root != IntPtr.Zero) GetClassNameW(root, name, name.Capacity);
+            GetWindowThreadProcessId(root, out var pid);
+            string process;
+            try { process = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { process = $"pid {pid}"; }
+            return $"\"{name}\" of {process}";
+        }
+
         public string ClickThrough()
         {
             var outside = OutsidePoints();
             Assert(outside.Count >= 3, $"only {outside.Count} test points outside the shape");
             foreach (var (name, x, y) in outside)
             {
+                if (ForeignWindowAt(x, y, expectBar: false) is { } other)
+                    throw new SkipException($"another program's window ({other}) covers the {name} at ({x}, {y})");
                 var before = _behind.Clicks;
                 if (!Click(x, y)) throw new SkipException($"SendInput was refused (error {Marshal.GetLastWin32Error()})");
                 var until = DateTime.UtcNow.AddSeconds(2);
@@ -782,6 +890,8 @@ internal static class SelfTest
             var centre = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), _host.Window) ?? throw new InvalidOperationException("the Cancel button is not in the window");
             var o = ClientOrigin();
             int x = o.X + (int)Math.Round(centre.X * Scale), y = o.Y + (int)Math.Round(centre.Y * Scale);
+            if (ForeignWindowAt(x, y, expectBar: true) is { } other)
+                throw new SkipException($"another program's window ({other}) covers the Cancel button at ({x}, {y})");
             var foreground = GetForegroundWindow();
             var behindClicks = _behind.Clicks;
             var cancels = _cancels;
@@ -814,6 +924,8 @@ internal static class SelfTest
             int dx = (int)Math.Round(160 * Scale), dy = -(int)Math.Round(180 * Scale);
             if (startX - dx < work.Left + 2 * c.Width) dx = -dx;
             if (startY + dy < work.Top + 4 * c.Height) throw new SkipException("the screen is too short to drag the bar upwards");
+            if (ForeignWindowAt(startX, startY, expectBar: true) is { } other)
+                throw new SkipException($"another program's window ({other}) covers the bar at ({startX}, {startY})");
             var foreground = GetForegroundWindow();
             var cancels = _cancels;
 

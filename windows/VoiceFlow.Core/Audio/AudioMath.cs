@@ -20,7 +20,10 @@ public static class AudioMath
 
     public static float Dbfs(float rms) => rms <= 0 ? -120 : 20 * MathF.Log10(rms);
 
-    /// <summary>Seconds of audio louder than <paramref name="thresholdDb"/>, measured in 30 ms frames.</summary>
+    /// <summary>
+    /// Seconds of audio louder than a fixed <paramref name="thresholdDb"/>, measured in 30 ms frames. Speech decisions
+    /// use <see cref="SpeechRule"/>, which follows the capture's noise floor; this stays for comparisons.
+    /// </summary>
     public static double VoicedSeconds(ReadOnlySpan<float> samples, float thresholdDb = -45)
     {
         int voiced = 0;
@@ -35,11 +38,11 @@ public static class AudioMath
     }
 
     /// <summary>
-    /// True when a recording has too little speech to send. Whisper invents text such as "Thank you." for
-    /// silence, so silent recordings never reach the API.
+    /// True when a recording has too little speech to send, by <see cref="SpeechRule"/>. Whisper invents text such as
+    /// "Thank you." for silence, so silent recordings never reach the API.
     /// </summary>
     public static bool IsSilent(ReadOnlySpan<float> samples, double minimumVoicedSeconds = 0.25) =>
-        VoicedSeconds(samples) < minimumVoicedSeconds;
+        SpeechRule.Analyze(samples).VoicedSeconds < minimumVoicedSeconds;
 
     /// <summary>
     /// Whisper mode: raises quiet speech to a usable level. Peak-normalizes to <paramref name="targetPeak"/>,
