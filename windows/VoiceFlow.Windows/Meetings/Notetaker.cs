@@ -26,7 +26,14 @@ internal sealed class Notetaker : IDisposable
     readonly SharedMicrophone _microphone;
     readonly DeliveryLog _deliveries;
     readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(1) };
+    /// <summary>Live levels four times a second, between the one-second ticks that take the audio.</summary>
+    readonly DispatcherTimer _levels = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly Action<MicHealthSnapshot> _onMicHealth;
+    CallEndDetector _callEnd = new();
+    int _ticks;
+    bool _checkingCall;
+    /// <summary>Set while the "call ended" notice counts down to stopping.</summary>
+    DispatcherTimer? _autoStop;
     bool _warnedSilentSystem;
     bool _warnedSilentMic;
     bool _micProblem;
@@ -81,7 +88,14 @@ internal sealed class Notetaker : IDisposable
         _onMicHealth = health => Dispatcher.UIThread.Post(() => OnMicHealth(health));
         _microphone.HealthChanged += _onMicHealth;
         _tick.Tick += (_, _) => Tick();
+        _levels.Tick += (_, _) =>
+        {
+            if (Current == State.Recording) _recorder.RefreshLevels();
+        };
     }
+
+    /// <summary>Seconds into the meeting with no meeting audio at all before saying so. Calls rarely open in total silence.</summary>
+    internal const int MeetingAudioWarnAfter = 20;
 
     /// <summary>
     /// Tells the user when the microphone stops delivering audio during a meeting. A restart in progress stays
@@ -100,13 +114,17 @@ internal sealed class Notetaker : IDisposable
                 if (_warnedSilentMic) break;
                 _warnedSilentMic = true;
                 _micToastShown = true;
-                _bar.Show("Not hearing your microphone", "It is sending silence. If you didn't mute it, check the input in Settings. The meeting keeps recording.", seconds: 12);
+                _ = WarnSilentMicAsync();
                 break;
             case MicHealthStatus.Failed:
                 _micProblem = true;
                 _micToastShown = true;
                 _deliveries.Record(new DeliveryLogEntry(DeliverySession.Meeting, DeliveryReason.MicFailed, DeliveryDetail.DeviceLost));
-                _bar.Show("Not hearing your microphone", "VoiceFlow lost your mic and couldn't get it back. Check the input in Settings. The meeting keeps recording.", seconds: 12);
+                _bar.Show("Not hearing your microphone",
+                          health.Problem is { } problem
+                              ? $"{problem} The meeting keeps recording."
+                              : "VoiceFlow lost your mic and is trying to get it back. Check the input in Settings. The meeting keeps recording.",
+                          seconds: 12);
                 break;
             case MicHealthStatus.Healthy when _micProblem:
                 _micProblem = false;
@@ -115,6 +133,20 @@ internal sealed class Notetaker : IDisposable
                 _micToastShown = false;
                 break;
         }
+    }
+
+    /// <summary>Exact zeros: says whether Windows itself has the microphone muted, which a call app's mute button can do.</summary>
+    async Task WarnSilentMicAsync()
+    {
+        var id = _model.Preferences.InputDeviceId;
+        var muted = await Task.Run(() => AudioDevices.MicrophoneMuted(id.Length == 0 ? null : id));
+        if (Current != State.Recording) return;
+        if (muted == true)
+            _bar.Show("Windows has your microphone muted",
+                      "A call app's mute button or a headset switch can do this. Unmute it there or in Sound settings. The meeting keeps recording.", seconds: 12);
+        else
+            _bar.Show("Not hearing your microphone",
+                      "It is sending silence. If your headset has a mute switch, check it, or pick another input in Settings. The meeting keeps recording.", seconds: 12);
     }
 
     void Save()
@@ -156,10 +188,13 @@ internal sealed class Notetaker : IDisposable
         Live = _recorder.Snapshot();
         StartedAt = DateTimeOffset.Now;
         _warnedSilentSystem = false;
+        _callEnd = new CallEndDetector();
+        _ticks = 0;
         Current = State.Recording;
         _bar.MeetingSince = StartedAt;
         LastError = _recorder.LastError;
         _tick.Start();
+        _levels.Start();
         if (LastError != null) _bar.Show("Recording your microphone only", LastError, seconds: 8);
         else if (prefs.MeetingsConsentReminder) _bar.Show("Notetaker is on", "Let everyone on the call know you're taking notes.", seconds: 6);
         Logger.Info("Notetaker started");
@@ -170,13 +205,54 @@ internal sealed class Notetaker : IDisposable
     {
         if (Current != State.Recording) return;
         _recorder.Tick();
-        if (!_warnedSilentSystem && _recorder.SystemSilentSeconds >= 90 && Live?.MicOnly == false)
+        _ticks++;
+        CheckMeetingAudio();
+        if (_ticks % 5 == 0) _ = CheckCallEndedAsync();
+    }
+
+    /// <summary>Says so early when the meeting audio has been silent since the start.</summary>
+    void CheckMeetingAudio()
+    {
+        if (_warnedSilentSystem || !_recorder.RecordsSystemAudio || _recorder.SystemHeardSeconds > 0
+            || _ticks < MeetingAudioWarnAfter || DictationBusy()) return;
+        _warnedSilentSystem = true;
+        _bar.Show("Not hearing the meeting audio yet",
+                  "VoiceFlow records what plays on your default speakers or headset. If the call is playing, check that it plays there. Your microphone is still recorded.",
+                  seconds: 12);
+    }
+
+    /// <summary>Stops by itself once the call is over: a short notice first, so a meeting that carries on can keep recording.</summary>
+    async Task CheckCallEndedAsync()
+    {
+        if (!_model.Preferences.MeetingsAutoStop || _autoStop != null || _checkingCall || StartedAt is not { } started) return;
+        _checkingCall = true;
+        bool? callAppRecording;
+        try { callAppRecording = await Task.Run(AudioSessions.AnotherAppIsRecording); }
+        finally { _checkingCall = false; }
+        if (Current != State.Recording || _autoStop != null) return;
+        int? silent = _recorder.RecordsSystemAudio ? _recorder.SystemSilentSeconds : null;
+        if (!_callEnd.Observe((DateTimeOffset.Now - started).TotalSeconds, callAppRecording, silent)) return;
+        Logger.Info("Call ended; stopping Notetaker");
+        _autoStop = new DispatcherTimer { Interval = TimeSpan.FromSeconds(CallEndDetector.NoticeSeconds) };
+        _autoStop.Tick += (_, _) =>
         {
-            _warnedSilentSystem = true;
-            _bar.Show("Not hearing the meeting audio",
-                      "VoiceFlow records what plays on your default speakers or headset. Check that the call plays there. Your microphone is still recorded.",
-                      seconds: 12);
-        }
+            CancelAutoStop();
+            Stop();
+        };
+        _autoStop.Start();
+        _bar.Show("The call has ended", "Notetaker stops in 15 seconds and writes your notes.",
+                  new ToastAction("Keep recording", () =>
+                  {
+                      CancelAutoStop();
+                      _callEnd = new CallEndDetector();
+                      _bar.DismissToast();
+                  }), CallEndDetector.NoticeSeconds);
+    }
+
+    void CancelAutoStop()
+    {
+        _autoStop?.Stop();
+        _autoStop = null;
     }
 
     void OnUpdate(Meeting meeting)
@@ -202,6 +278,8 @@ internal sealed class Notetaker : IDisposable
         Current = State.WritingNotes;
         _bar.MeetingSince = null;
         _tick.Stop();
+        _levels.Stop();
+        CancelAutoStop();
         Changed?.Invoke();
         Meeting? meeting;
         var failed = false;
@@ -242,6 +320,8 @@ internal sealed class Notetaker : IDisposable
     {
         if (Current != State.Recording) return;
         _tick.Stop();
+        _levels.Stop();
+        CancelAutoStop();
         _recorder.Abort();
         var meeting = _recorder.Snapshot();
         Current = State.Idle;
@@ -398,5 +478,6 @@ internal sealed class Notetaker : IDisposable
         Abort();
         _microphone.HealthChanged -= _onMicHealth;
         _tick.Stop();
+        _levels.Stop();
     }
 }

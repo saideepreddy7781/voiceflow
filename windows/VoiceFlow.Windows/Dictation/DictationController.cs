@@ -194,7 +194,7 @@ internal sealed class DictationController : IDisposable
         var micFailed = _micFailed;
         var samples = StopCapture();
         var audioSeconds = samples.Length / AudioMath.SampleRate;
-        var voiced = AudioMath.VoicedSeconds(samples);
+        var voiced = SpeechRule.Analyze(samples).VoicedSeconds;
         var verdict = AudioMath.Verdict(samples, held);
         // A device that failed mid-session explains missing audio, however short or quiet the result is.
         if (micFailed && verdict is CaptureVerdict.TooShort or CaptureVerdict.NoSpeech) verdict = CaptureVerdict.NoAudio;
@@ -210,7 +210,12 @@ internal sealed class DictationController : IDisposable
                     break;
                 case CaptureVerdict.NoAudio or CaptureVerdict.DigitalSilence:
                     Sounds.Error(_model.Preferences.PlaySounds);
-                    _bar.Show("Your microphone sent no audio", "Check the input in Settings.", new ToastAction("Open Settings", OpenSettings), 6);
+                    // Exact zeros usually mean Windows has the microphone muted (a call app's mute button can do it).
+                    var id = _model.Preferences.InputDeviceId;
+                    if (verdict == CaptureVerdict.DigitalSilence && AudioDevices.MicrophoneMuted(id.Length == 0 ? null : id) == true)
+                        _bar.Show("Windows has your microphone muted", "A call app's mute button or a headset switch can do this. Unmute it there or in Sound settings.", seconds: 6);
+                    else
+                        _bar.Show("Your microphone sent no audio", "Check the input in Settings.", new ToastAction("Open Settings", OpenSettings), 6);
                     Note(DeliveryReason.MicFailed, micFailed ? DeliveryDetail.DeviceLost : verdict == CaptureVerdict.DigitalSilence ? DeliveryDetail.DeadSignal : DeliveryDetail.Stalled, audioSeconds);
                     break;
                 default:
@@ -662,7 +667,8 @@ internal sealed class DictationController : IDisposable
     {
         if (_blockedField) return;
         var prefs = _model.Preferences;
-        var audio = prefs.WhisperMode ? AudioMath.Normalized(samples) : samples;
+        // The same rule as meeting chunks: quiet speech (a voice-processing call, whispering) is raised before upload.
+        var audio = SpeechRule.PrepareForUpload(samples, prefs.WhisperMode ? SpeechRule.WhisperModeMaximumGainDb : SpeechRule.MaximumGainDb);
         var prompts = new WhisperPrompts(_whisperTerms, prefs.TeluguScript, prefs.HindiScript);
         var key = _model.GetKey();
         var task = Task.Run(async () =>

@@ -193,28 +193,130 @@ public class SharedMicrophoneTests
     }
 
     [Fact]
-    public void DigitalSilenceIsADeadMicAndRestartsOnce()
+    public void DigitalSilenceIsADeadMicAndKeepsBeingRebuiltQuietly()
     {
         using var meeting = _hub.Subscribe("meeting");
         var changes = new List<MicHealthStatus>();
         _hub.HealthChanged += h => changes.Add(h.Status);
         Run(Zeros, 30);
         Assert.Contains(MicHealthStatus.DeadSignal, changes);
-        Assert.Equal(2, _source.Opened.Count);     // one restart per episode, however long the silence lasts
+        // Rebuilt at 3 s, reported and rebuilt at 6 s, rebuilt again at 16 s; the next is due at 46 s.
+        Assert.Equal(4, _source.Opened.Count);
         Assert.Equal(1, _hub.Diagnostics.DeadSignals);
         Run(Voice, 1);
         Assert.Equal(MicHealthStatus.Healthy, _hub.Health.Status);
     }
 
     [Fact]
-    public void AMicThatWentFlatAfterWorkingIsReportedButNotRestarted()
+    public void AMicThatGoesFlatMidCallIsRebuiltAndReported()
     {
+        // What the Mac microphone did while a call app held it: working audio, then exact zeros for the whole call.
         using var meeting = _hub.Subscribe("meeting");
         Run(Voice, 2);
         Run(Zeros, 12);
         Assert.Equal(MicHealthStatus.DeadSignal, _hub.Health.Status);
         Assert.Equal(1, _hub.Diagnostics.DeadSignals);
-        Assert.Single(_source.Opened);             // restarting can't fix a mute or a noise gate
+        Assert.Equal(3, _source.Opened.Count);
+        Run(Voice, 1);
+        Assert.Equal(MicHealthStatus.Healthy, _hub.Health.Status);
+    }
+
+    /// <summary>Polls every half second with nothing arriving, and returns the time each status first appeared.</summary>
+    Dictionary<MicHealthStatus, double> Watch(float[]? frames, double seconds)
+    {
+        var first = new Dictionary<MicHealthStatus, double>();
+        _hub.HealthChanged += h => first.TryAdd(h.Status, _elapsed);
+        for (_elapsed = 0; _elapsed < seconds;)
+        {
+            if (frames != null) _source.Latest!.Emit(frames);
+            Advance(0.5);
+            _elapsed += 0.5;
+            _hub.Poll();
+        }
+        return first;
+    }
+
+    double _elapsed;
+
+    [Fact]
+    public void AStallIsRebuiltAfterTwoSecondsAndReportedAfterFive()
+    {
+        using var meeting = _hub.Subscribe("meeting");
+        var failed = 0;
+        meeting.Failed += () => failed++;
+        _source.Latest!.Emit(Voice);
+        var first = Watch(null, 5);
+        Assert.Equal(2, first[MicHealthStatus.Stalled]);
+        Assert.Equal(5, first[MicHealthStatus.Failed]);
+        Assert.Equal(3, _source.Opened.Count);
+        Assert.Equal(1, failed);
+        // Quiet rebuilds continue, 10 s and then 30 s apart, and the subscriber is told only once.
+        var later = Watch(null, 45);
+        Assert.Empty(later);
+        Assert.Equal(5, _source.Opened.Count);
+        Assert.Equal(1, failed);
+        Run(Voice, 1);
+        Assert.Equal(MicHealthStatus.Healthy, _hub.Health.Status);
+    }
+
+    [Fact]
+    public void DigitalSilenceIsReportedWithinSixSeconds()
+    {
+        using var meeting = _hub.Subscribe("meeting");
+        var first = Watch(Zeros, 6);
+        Assert.Equal(3, first[MicHealthStatus.Recovering]);
+        Assert.Equal(6, first[MicHealthStatus.DeadSignal]);
+        Assert.Equal(3, _source.Opened.Count);
+    }
+
+    [Fact]
+    public void AShortGlitchIsNeverReported()
+    {
+        using var meeting = _hub.Subscribe("meeting");
+        var changes = new List<MicHealthStatus>();
+        _hub.HealthChanged += h => changes.Add(h.Status);
+        Run(Voice, 1);
+        Advance(1);                                // 1.5 s without frames: under the stall time
+        _hub.Poll();
+        Run(Zeros, 2.5);                           // under the dead-signal time
+        Run(Voice, 1);
+        Assert.Single(_source.Opened);
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public void AStartFailureMessageReachesTheSnapshotUntilTheDeviceStarts()
+    {
+        using var meeting = _hub.Subscribe("meeting");
+        _source.StartError = new InvalidOperationException("Another app has taken your microphone for itself (exclusive mode).");
+        _source.Latest!.SimulateLoss();
+        _hub.Poll();
+        Advance(1);
+        _hub.Poll();
+        Assert.Equal(MicHealthStatus.Failed, _hub.Health.Status);
+        Assert.StartsWith("Another app has taken", _hub.Health.Problem);
+        _source.StartError = null;
+        Advance(2);
+        _hub.Poll();
+        Assert.Null(_hub.Health.Problem);
+        Run(Voice, 1);
+        Assert.Equal(MicHealthStatus.Healthy, _hub.Health.Status);
+    }
+
+    [Fact]
+    public void ARebuildThatCannotOpenTheDeviceHandsOverToTheStartRetries()
+    {
+        using var meeting = _hub.Subscribe("meeting");
+        _source.Latest!.Emit(Voice);
+        _source.StartError = new TimeoutException();
+        Advance(2);
+        _hub.Poll();                               // stall rebuild fails to open
+        Assert.Equal(1, _hub.Diagnostics.FailedStarts);
+        _source.StartError = null;
+        Advance(1);
+        _hub.Poll();                               // first retry delay is 1 s
+        Run(Voice, 1);
+        Assert.Equal(MicHealthStatus.Healthy, _hub.Health.Status);
     }
 
     [Fact]
@@ -234,7 +336,7 @@ public class SharedMicrophoneTests
         var changes = new List<MicHealthStatus>();
         _hub.HealthChanged += h => changes.Add(h.Status);
         _source.Latest!.Emit(Voice);
-        Advance(3);
+        Advance(2);
         _hub.Poll();
         Assert.Contains(MicHealthStatus.Stalled, changes);
         Assert.Equal(1, _hub.Diagnostics.Stalls);
@@ -250,7 +352,7 @@ public class SharedMicrophoneTests
         var failed = 0;
         meeting.Failed += () => failed++;
         _source.Latest!.Emit(Voice);
-        Advance(3);
+        Advance(2);
         _hub.Poll();                               // restart 1: starts cleanly, delivers nothing
         Advance(3);
         _hub.Poll();                               // restart 2

@@ -15,7 +15,8 @@ public sealed class SegmentCutter
     public double MaximumSeconds { get; set; } = 30.0;
     public double PauseSeconds { get; set; } = 0.4;
     public double OverlapSeconds { get; set; } = 0.2;
-    public float SilenceDb { get; set; } = -45;
+    /// <summary>A fixed pause level, for tests. Null (the default) uses <see cref="SpeechRule"/> against the open segment's own noise floor.</summary>
+    public float? SilenceDb { get; set; }
 
     /// <summary>Start of the segment that is still open, in samples.</summary>
     public int OpenStart { get; private set; }
@@ -42,11 +43,13 @@ public sealed class SegmentCutter
         int pauseFrames = (int)(PauseSeconds * Rate) / AudioMath.FrameLength;
         int frame = AudioMath.FrameLength;
 
+        // Search for a pause from the minimum length onwards.
+        var silenceDb = SilenceDb ?? SpeechRule.Threshold(SpeechRule.NoiseFloor(SpeechRule.FrameDbs(samples)));
         int quiet = 0;
         int i = minimum;   // relative to OpenStart from here on
         while (i + frame <= samples.Length)
         {
-            if (AudioMath.Dbfs(AudioMath.Rms(samples.Slice(i, frame))) <= SilenceDb)
+            if (AudioMath.Dbfs(AudioMath.Rms(samples.Slice(i, frame))) <= silenceDb)
             {
                 quiet += 1;
                 if (quiet >= pauseFrames)

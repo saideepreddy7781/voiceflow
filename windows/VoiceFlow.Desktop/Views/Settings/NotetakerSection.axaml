@@ -14,6 +14,9 @@
         <c:SettingRow Title="Record the other people (system audio)" Description="Without it, only your microphone is recorded.">
           <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding SystemAudio}"/>
         </c:SettingRow>
+        <c:SettingRow Title="Stop when the call ends" Description="After the call app lets go of the microphone and the call audio stops for a minute.">
+          <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding AutoStop}"/>
+        </c:SettingRow>
         <c:SettingRow Title="Remind me to tell everyone I'm taking notes">
           <ToggleButton Theme="{StaticResource Switch}" IsChecked="{Binding ConsentReminder}"/>
         </c:SettingRow>

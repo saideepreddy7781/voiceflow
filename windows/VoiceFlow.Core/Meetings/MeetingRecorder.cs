@@ -12,6 +12,8 @@ public interface IMeetingAudioSource : IDisposable
     float[] DrainSamples();
     /// <summary>Seconds of audio lost to device restarts since the last call. Sources that cannot tell report 0.</summary>
     double DrainGapSeconds() => 0;
+    /// <summary>0...1 level of the newest audio, read without taking it (live meters between ticks). Null when there is none yet.</summary>
+    float? CurrentLevel() => null;
 }
 
 /// <summary>
@@ -88,6 +90,13 @@ public sealed class MeetingRecorder
     public float SystemLevel { get; private set; }
     /// <summary>Seconds in a row the meeting audio has been digital silence.</summary>
     public int SystemSilentSeconds { get; private set; }
+    /// <summary>
+    /// Seconds of this meeting in which the meeting audio carried any sound. Zero for a long time means the call
+    /// plays somewhere VoiceFlow can't hear.
+    /// </summary>
+    public int SystemHeardSeconds { get; private set; }
+    /// <summary>Whether meeting audio is being recorded at all.</summary>
+    public bool RecordsSystemAudio => _system != null;
     /// <summary>The language last heard on your microphone, for the live view.</summary>
     public string? MicLanguage { get { lock (_gate) return _micSide.Language; } }
     /// <summary>The language last heard on the call, for the live view.</summary>
@@ -173,6 +182,7 @@ public sealed class MeetingRecorder
         IsRecording = true;
         _heardSpeech = false;
         SystemSilentSeconds = 0;
+        SystemHeardSeconds = 0;
         _queuedMic.Clear();
         _queuedSystem.Clear();
         _micFed = 0;
@@ -242,6 +252,14 @@ public sealed class MeetingRecorder
         _system = null;
     }
 
+    /// <summary>Updates the live levels from the newest audio without taking it. Call it as often as the meters redraw.</summary>
+    public void RefreshLevels()
+    {
+        if (!IsRecording) return;
+        if (_mic?.CurrentLevel() is { } mic) MicLevel = mic;
+        if (_system?.CurrentLevel() is { } system) SystemLevel = system;
+    }
+
     /// <summary>Call every second while recording (the app's UI timer), and once with final at Stop.</summary>
     public void Tick(bool final = false)
     {
@@ -262,7 +280,9 @@ public sealed class MeetingRecorder
         {
             var newSystem = _system.DrainSamples();
             SystemLevel = AudioMath.Level(newSystem.AsSpan(Math.Max(0, newSystem.Length - 1_600)));
-            SystemSilentSeconds = newSystem.All(v => v == 0) ? SystemSilentSeconds + 1 : 0;
+            var silent = newSystem.All(v => v == 0);
+            SystemSilentSeconds = silent ? SystemSilentSeconds + 1 : 0;
+            if (!silent) SystemHeardSeconds++;
             _queuedSystem.AddRange(newSystem);
             // Keep the two sides on one clock. Whichever stalls (loopback delivers nothing while nothing plays,
             // a device restarting) is padded with silence.
@@ -345,7 +365,7 @@ public sealed class MeetingRecorder
         if (_settings is not { } settings) return;
         _heardSpeech = true;
         var request = RequestFor(speaker, settings);
-        var wav = AudioMath.Wav(AudioMath.Normalized(chunk.Samples));
+        var wav = AudioMath.Wav(SpeechRule.PrepareForUpload(chunk.Samples));
         var cancel = _cancel.Token;
         long id;
         lock (_gate)
@@ -486,7 +506,7 @@ public sealed class MeetingRecorder
                 continue;
             }
             var request = RequestFor(chunk.Speaker, settings);
-            var wav = AudioMath.Wav(AudioMath.Normalized(chunk.FloatSamples));
+            var wav = AudioMath.Wav(SpeechRule.PrepareForUpload(chunk.FloatSamples));
             var result = await AttemptAsync(wav, request, FinalAttempts, CancellationToken.None, deadline).ConfigureAwait(false);
             lock (_gate)
             {

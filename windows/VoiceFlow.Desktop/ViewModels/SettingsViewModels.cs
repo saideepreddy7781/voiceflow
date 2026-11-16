@@ -299,6 +299,12 @@ public sealed partial class NotetakerSettings : ObservableObject
         set { _services.Preferences.Update(p => p.MeetingsSystemAudio = value); OnPropertyChanged(); }
     }
 
+    public bool AutoStop
+    {
+        get => Prefs.MeetingsAutoStop;
+        set { _services.Preferences.Update(p => p.MeetingsAutoStop = value); OnPropertyChanged(); }
+    }
+
     public bool ConsentReminder
     {
         get => Prefs.MeetingsConsentReminder;
