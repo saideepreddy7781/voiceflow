@@ -169,6 +169,8 @@ public struct Preferences: Equatable, Codable, Sendable {
     /// Use the calendar event happening now for the meeting title and attendee names.
     public var meetingsUseCalendar: Bool = false
     public var meetingsConsentReminder: Bool = true
+    /// Stop recording by itself once the call has ended.
+    public var meetingsAutoStop: Bool = true
 
     // System
     /// "Show Flow Bar at all times".
@@ -214,7 +216,7 @@ public struct Preferences: Equatable, Codable, Sendable {
         case hotkey, editorProvider, transcriptionModel, cleanupModel, commandModel, geminiModel
         case languages, teluguScript, hindiScript, cleanupLevel, commandModeEnabled, styles, autoLearnWords
         case inputDeviceUID, whisperMode, muteAudioWhileDictating, playSounds
-        case meetingsDetect, meetingsSystemAudio, meetingsFolder, meetingsNotesLanguage, meetingsUseCalendar, meetingsConsentReminder
+        case meetingsDetect, meetingsSystemAudio, meetingsFolder, meetingsNotesLanguage, meetingsUseCalendar, meetingsConsentReminder, meetingsAutoStop
         case showBarWhenIdle, flowBarDraggable, flowBarSpots, showInDock, historyRetentionDays, launchAtLogin, debugLogging, onboarded
         case checkForUpdates, dismissedUpdateVersion
         // Older versions
@@ -258,6 +260,7 @@ public struct Preferences: Equatable, Codable, Sendable {
         meetingsNotesLanguage = value(.meetingsNotesLanguage, d.meetingsNotesLanguage)
         meetingsUseCalendar = value(.meetingsUseCalendar, d.meetingsUseCalendar)
         meetingsConsentReminder = value(.meetingsConsentReminder, d.meetingsConsentReminder)
+        meetingsAutoStop = value(.meetingsAutoStop, d.meetingsAutoStop)
         showBarWhenIdle = value(.showBarWhenIdle, d.showBarWhenIdle)
         flowBarDraggable = value(.flowBarDraggable, d.flowBarDraggable)
         flowBarSpots = value(.flowBarSpots, d.flowBarSpots)
@@ -295,6 +298,7 @@ public struct Preferences: Equatable, Codable, Sendable {
         try c.encode(meetingsNotesLanguage, forKey: .meetingsNotesLanguage)
         try c.encode(meetingsUseCalendar, forKey: .meetingsUseCalendar)
         try c.encode(meetingsConsentReminder, forKey: .meetingsConsentReminder)
+        try c.encode(meetingsAutoStop, forKey: .meetingsAutoStop)
         try c.encode(showBarWhenIdle, forKey: .showBarWhenIdle)
         try c.encode(flowBarDraggable, forKey: .flowBarDraggable)
         try c.encode(flowBarSpots, forKey: .flowBarSpots)

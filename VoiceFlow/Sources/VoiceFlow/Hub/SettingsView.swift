@@ -314,6 +314,8 @@ private struct NotetakerSettings: View {
             SettingToggle(title: "Record the other people (system audio)",
                           detail: "macOS asks once for permission to record this computer's audio. Without it, only your microphone is recorded.",
                           isOn: $model.preferences.meetingsSystemAudio)
+            SettingToggle(title: "Stop when the call ends", detail: "After the call app lets go of the microphone and the call audio stops for a minute.",
+                          isOn: $model.preferences.meetingsAutoStop)
             SettingToggle(title: "Remind me to tell everyone I'm taking notes", isOn: $model.preferences.meetingsConsentReminder)
         }
         SettingsGroup("Notes") {

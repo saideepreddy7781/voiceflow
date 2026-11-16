@@ -41,6 +41,9 @@ final class Notetaker {
     private(set) var levelTick = 0
     private var warnedSilentSystem = false
     private var levelTimer: Timer?
+    private var callEnd = CallEndDetector()
+    /// Set while the "call ended" notice counts down to stopping.
+    private var autoStopTask: Task<Void, Never>?
 
     init(model: AppModel) {
         self.model = model
@@ -127,17 +130,15 @@ final class Notetaker {
         live = recorder.meeting
         startedAt = Date()
         warnedSilentSystem = false
+        callEnd = CallEndDetector()
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, self.state == .recording else { return }
                 self.levelTick &+= 1
+                self.recorder.refreshLevels()
                 self.updateMicHealth()
-                if !self.warnedSilentSystem, self.recorder.systemSilentSeconds >= 90, self.live?.micOnly == false {
-                    self.warnedSilentSystem = true
-                    self.model.pill.show("Not hearing the meeting audio",
-                                         detail: "Allow VoiceFlow under System Settings → Privacy & Security → Screen & System Audio Recording. Your microphone is still recorded.",
-                                         action: .init(title: "Open") { self.model.openPrivacyPane("Privacy_ScreenCapture") }, seconds: 12)
-                }
+                self.checkMeetingAudio()
+                if self.levelTick % 20 == 0 { self.checkCallEnded() }
             }
         }
         state = .recording
@@ -149,10 +150,54 @@ final class Notetaker {
         offeredForThisCall = true
         if let error = recorder.lastError {
             model.pill.show("Recording your microphone only", detail: error, seconds: 8)
+        } else if recorder.recordsSystemAudio, SystemAudioPermission.current() == .denied {
+            warnedSilentSystem = true
+            warnSilentMeetingAudio(denied: true)
         } else if prefs.meetingsConsentReminder {
             model.pill.show("Notetaker is on", detail: "Let everyone on the call know you're taking notes.", seconds: 6)
         }
         log.info("Notetaker started: \(title, privacy: .private)")
+    }
+
+    /// Seconds into the meeting with no meeting audio at all before saying so. Calls rarely open in total silence.
+    static let meetingAudioWarnAfter = 20.0
+
+    /// Says so early when the meeting audio has been silent since the start: usually a missing permission.
+    private func checkMeetingAudio() {
+        guard !warnedSilentSystem, recorder.recordsSystemAudio, recorder.systemHeardSeconds == 0,
+              let startedAt, Date().timeIntervalSince(startedAt) >= Self.meetingAudioWarnAfter, !model.controller.isBusy else { return }
+        warnedSilentSystem = true
+        warnSilentMeetingAudio(denied: SystemAudioPermission.current() == .denied)
+    }
+
+    private func warnSilentMeetingAudio(denied: Bool) {
+        model.pill.show(denied ? "VoiceFlow can't hear the meeting audio" : "Not hearing the meeting audio yet",
+                        detail: denied
+                            ? "Allow VoiceFlow under System Settings → Privacy & Security → Screen & System Audio Recording. Your microphone is still recorded."
+                            : "If the call is playing, allow VoiceFlow under System Settings → Privacy & Security → Screen & System Audio Recording. Your microphone is still recorded.",
+                        action: .init(title: "Open") { self.model.openPrivacyPane("Privacy_ScreenCapture") }, seconds: 12)
+    }
+
+    /// Stops by itself once the call is over: a short notice first, so a meeting that carries on can keep recording.
+    private func checkCallEnded() {
+        guard model.preferences.meetingsAutoStop, autoStopTask == nil, let startedAt else { return }
+        let silent: Int? = recorder.recordsSystemAudio ? recorder.systemSilentSeconds : nil
+        guard callEnd.observe(at: Date().timeIntervalSince(startedAt), callAppRecording: AudioDevices.anotherAppIsRecording(),
+                              meetingAudioSilentSeconds: silent) else { return }
+        log.info("Call ended; stopping Notetaker")
+        model.pill.show("The call has ended", detail: "Notetaker stops in 15 seconds and writes your notes.",
+                        action: .init(title: "Keep recording") { [weak self] in
+                            self?.autoStopTask?.cancel()
+                            self?.autoStopTask = nil
+                            self?.callEnd = CallEndDetector()
+                            self?.model.pill.set(.idle)
+                        }, seconds: 15)
+        autoStopTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self else { return }
+            self.autoStopTask = nil
+            self.stop()
+        }
     }
 
     /// Tells the user when the microphone stops delivering audio during a meeting. A dictation in progress
@@ -162,14 +207,17 @@ final class Notetaker {
         guard current != micHealth, !model.controller.isBusy else { return }
         let previous = micHealth
         micHealth = current
-        model.diagnostics.record(DiagnosticEvent(session: .meeting, reason: current == .healthy ? .micRecovered : .micFailed,
-                                                 micRestarts: recorder.micRestartsRequested, duringMeeting: true))
+        let wasBad = previous == .silent || previous == .noAudio
+        if current == .silent || current == .noAudio || (current == .healthy && wasBad) {
+            model.diagnostics.record(DiagnosticEvent(session: .meeting, reason: current == .healthy ? .micRecovered : .micFailed,
+                                                     micRestarts: recorder.micRestartsRequested, duringMeeting: true))
+        }
         switch current {
         case .silent, .noAudio:
             model.pill.show("Not hearing your microphone",
                             detail: current == .silent
-                                ? "It is sending silence. If you didn't mute it, check the input in Settings → General. The meeting keeps recording."
-                                : "VoiceFlow lost your mic and couldn't get it back. Check the input in Settings → General. The meeting keeps recording.",
+                                ? "It is sending silence. If your headset has a mute switch, check it, or pick another input in Settings → General. The meeting keeps recording."
+                                : "VoiceFlow lost your mic and is trying to get it back. Check the input in Settings → General. The meeting keeps recording.",
                             action: .init(title: "Open") { WindowManager.shared.showSettings(.general) }, seconds: 12)
         case .healthy:
             if previous == .silent || previous == .noAudio { model.pill.show("Your microphone is back", seconds: 4) }
@@ -192,6 +240,8 @@ final class Notetaker {
         model.pill.meetingSince = nil
         levelTimer?.invalidate()
         levelTimer = nil
+        autoStopTask?.cancel()
+        autoStopTask = nil
         guard var meeting = await recorder.stop(retryFailed: writeNotes) else { state = .idle; return nil }
         meeting.status = writeNotes ? .writingNotes : .failed
         if !writeNotes { meeting.error = "VoiceFlow quit before the notes were written. Press Try again." }

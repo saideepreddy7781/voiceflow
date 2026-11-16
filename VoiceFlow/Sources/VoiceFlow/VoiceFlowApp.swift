@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// `--screenshots <dir>` renders the UI with demo data and quits. `--capsule-selftest <out.json>` checks the
-/// Flow bar on the real window server and quits. Everything else starts the real app.
+/// Flow bar on the real window server, and `--audio-selftest <file>` checks the meeting audio paths on real
+/// hardware; both quit when done. Everything else starts the real app.
 @main
 @MainActor
 enum Launch {
@@ -12,6 +13,12 @@ enum Launch {
         }
         if let output = FlowBarSelfTest.requestedOutput(CommandLine.arguments) {
             FlowBarSelfTest.run(to: output)
+        }
+        if let (seconds, output) = CallSimulator.requested(CommandLine.arguments) {
+            CallSimulator.run(seconds: seconds, to: output)
+        }
+        if let output = AudioSelfTest.requestedOutput(CommandLine.arguments) {
+            AudioSelfTest.run(to: output)
         }
         VoiceFlowApp.main()
     }

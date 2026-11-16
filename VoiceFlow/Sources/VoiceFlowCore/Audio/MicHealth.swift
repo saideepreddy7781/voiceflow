@@ -13,8 +13,9 @@ public enum MicHealthState: String, Codable, Sendable {
 
 /// Decides when a meeting's microphone is dead. Fed once per second with what arrived during that second.
 ///
-/// A stall gets restart attempts straight away. Digital silence gets a longer grace period and fewer
-/// attempts, because the usual cause is a mute button on a headset.
+/// A problem gets one quick rebuild, and if that does not fix it the user is told within seconds, while the
+/// meeting is still on and can be fixed. Rebuilds then continue quietly, so a reconnected microphone comes back
+/// by itself.
 public struct MicHealthMonitor: Sendable {
     public struct Decision: Equatable, Sendable {
         public var state: MicHealthState
@@ -22,13 +23,15 @@ public struct MicHealthMonitor: Sendable {
         public var restart: Bool
     }
 
-    /// Seconds with no samples before the first restart.
-    static let stallSeconds = 4
-    /// Seconds of exact zeros before the first restart.
-    static let silenceSeconds = 10
-    /// Restarts tried before the problem is reported to the user.
-    static let stallAttempts = 2
-    static let silenceAttempts = 1
+    /// Seconds with no samples before the first rebuild.
+    static let stallSeconds = 2
+    /// Seconds of exact zeros before the first rebuild. Longer than a stall: a headset mute button also sends zeros.
+    static let silenceSeconds = 3
+    /// Seconds after the first rebuild before the problem is reported.
+    static let reportAfterRestart = 3
+    /// Quiet retries once reported: the first soon, then twice a minute.
+    static let firstRetry = 10
+    static let laterRetry = 30
 
     public private(set) var state: MicHealthState = .healthy
     /// Seconds of the current episode.
@@ -49,13 +52,16 @@ public struct MicHealthMonitor: Sendable {
         guard badSeconds >= nextRestartAt else { return Decision(state: state, restart: false) }
 
         restarts += 1
-        let attempts = stalled ? Self.stallAttempts : Self.silenceAttempts
-        if restarts > attempts {
-            state = stalled ? .noAudio : .silent
-            nextRestartAt = badSeconds + 60
-        } else {
+        switch restarts {
+        case 1:
             state = .restarting
-            nextRestartAt = badSeconds + (stalled ? 5 * restarts : 20)
+            nextRestartAt = badSeconds + Self.reportAfterRestart
+        case 2:
+            state = stalled ? .noAudio : .silent
+            nextRestartAt = badSeconds + Self.firstRetry
+        default:
+            state = stalled ? .noAudio : .silent
+            nextRestartAt = badSeconds + Self.laterRetry
         }
         return Decision(state: state, restart: true)
     }

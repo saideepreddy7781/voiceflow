@@ -1,34 +1,113 @@
 import Foundation
 
-/// Decides whether a 30 ms frame holds a voice, by loudness against a slowly tracked noise floor.
-/// Pure and clock-free, on 16 kHz samples like the rest of `AudioMath`.
-public struct VoiceGate: Sendable {
-    /// Below this is always silence, so digital silence and very quiet rooms can't be called speech.
-    public static let absoluteFloorDB: Float = -45
+/// The one rule for "is this speech", shared by dictation and meetings: a 30 ms frame is voiced when it is
+/// `marginDB` above the noise floor of the capture it came from.
+///
+/// A fixed level does not work for every microphone. While a call app uses voice processing, the built-in
+/// microphone becomes a raw array about 10 dB quieter, and a fixed -45 dBFS floor called real speech silence.
+/// The floor is the 10th percentile of the frames heard, leaving out exact zeros, so digital silence and a
+/// microphone that gates to zero between words never drag it down.
+public enum SpeechRule {
+    /// Never speech below this, whatever the floor: digital silence and the quietest rooms stay silent.
+    public static let absoluteMinimumDB: Float = -70
     /// A frame is voiced when it is this far above the noise floor.
-    public static let marginDB: Float = 12
-    /// A frame above this is voiced whatever the noise floor, so a loud room can't mute a voice.
+    public static let marginDB: Float = 10
+    /// A frame above this is voiced whatever the floor, so a loud room can't mute a voice.
     public static let ceilingDB: Float = -35
+    /// Exact zeros are not a noise floor.
+    static let zeroDB: Float = -119
+
+    /// The voiced threshold for a capture with this noise floor (nil: nothing but zeros heard yet).
+    public static func threshold(noiseFloorDB: Float?) -> Float {
+        guard let floor = noiseFloorDB else { return absoluteMinimumDB }
+        return max(absoluteMinimumDB, min(ceilingDB, floor + marginDB))
+    }
+
+    /// The 10th percentile of the frame levels, leaving out exact zeros.
+    public static func noiseFloor(frameDBs: [Float]) -> Float? {
+        let heard = frameDBs.filter { $0 > zeroDB }.sorted()
+        guard !heard.isEmpty else { return nil }
+        return heard[heard.count / 10]
+    }
+
+    /// Frame levels in dBFS, 30 ms each.
+    public static func frameDBs(_ samples: [Float]) -> [Float] {
+        stride(from: 0, to: samples.count, by: AudioMath.frameLength).map { i in
+            AudioMath.dbfs(AudioMath.rms(samples[i..<min(i + AudioMath.frameLength, samples.count)]))
+        }
+    }
+
+    /// A whole recording measured against its own floor.
+    public struct Analysis: Sendable, Equatable {
+        public var noiseFloorDB: Float?
+        public var thresholdDB: Float
+        public var voicedSeconds: Double
+        /// RMS level of the voiced frames (-120 when there are none).
+        public var speechDB: Float
+    }
+
+    public static func analyze(_ samples: [Float]) -> Analysis {
+        let dbs = frameDBs(samples)
+        let floor = noiseFloor(frameDBs: dbs)
+        let threshold = threshold(noiseFloorDB: floor)
+        var voiced = 0
+        var energy: Double = 0
+        for (k, db) in dbs.enumerated() where db > threshold {
+            let start = k * AudioMath.frameLength
+            let end = min(start + AudioMath.frameLength, samples.count)
+            voiced += end - start
+            for s in samples[start..<end] { energy += Double(s * s) }
+        }
+        let speechDB = voiced > 0 ? AudioMath.dbfs(Float((energy / Double(voiced)).squareRoot())) : -120
+        return Analysis(noiseFloorDB: floor, thresholdDB: threshold, voicedSeconds: Double(voiced) / AudioMath.sampleRate, speechDB: speechDB)
+    }
+
+    /// Level the voiced frames are raised to before upload.
+    public static let uploadSpeechDB: Float = -24
+    /// Most gain added before upload. 24 dB covers a voice-processing call (about 10 dB down) with room to spare,
+    /// and the voiced check has already kept room noise from getting this far.
+    public static let maximumGainDB: Float = 24
+
+    /// Gain in dB to bring quiet speech up to `uploadSpeechDB`. Speech already at that level or louder is untouched.
+    public static func uploadGainDB(_ analysis: Analysis, maximum: Float = maximumGainDB) -> Float {
+        guard analysis.voicedSeconds > 0 else { return 0 }
+        return max(0, min(maximum, uploadSpeechDB - analysis.speechDB))
+    }
+
+    /// The audio to upload: quiet speech raised, then clipped to -1...1 (a few clipped clicks do not hurt Whisper).
+    public static func prepareForUpload(_ samples: [Float], maximumGainDB maximum: Float = maximumGainDB) -> [Float] {
+        let gainDB = uploadGainDB(analyze(samples), maximum: maximum)
+        guard gainDB > 0.5 else { return samples }
+        let gain = Float(pow(10, Double(gainDB) / 20))
+        return samples.map { max(-1, min(1, $0 * gain)) }
+    }
+}
+
+/// Decides whether a 30 ms frame holds a voice while a stream is still arriving: `SpeechRule` against a noise
+/// floor tracked over the last 15 seconds. Pure and clock-free, on 16 kHz samples like the rest of `AudioMath`.
+public struct VoiceGate: Sendable {
     static let historyFrames = 500          // 15 s
     static let refreshEveryFrames = 33      // about 1 s
 
     private var history: [Float] = []
     private var cursor = 0
     private var sinceRefresh = 0
-    private var threshold: Float = VoiceGate.absoluteFloorDB
+    private var threshold: Float = SpeechRule.absoluteMinimumDB
 
     public init() {}
 
     public mutating func isVoiced(frameDB db: Float) -> Bool {
-        if history.count < Self.historyFrames { history.append(db) } else {
-            history[cursor] = db
-            cursor = (cursor + 1) % Self.historyFrames
+        if db > SpeechRule.zeroDB {
+            if history.count < Self.historyFrames { history.append(db) } else {
+                history[cursor] = db
+                cursor = (cursor + 1) % Self.historyFrames
+            }
         }
         sinceRefresh += 1
-        if sinceRefresh >= Self.refreshEveryFrames {
+        // Every frame until a second has been heard, so the start of a stream is judged against its own floor.
+        if sinceRefresh >= Self.refreshEveryFrames || history.count < Self.refreshEveryFrames {
             sinceRefresh = 0
-            let floor = history.sorted()[history.count / 10]
-            threshold = max(Self.absoluteFloorDB, min(Self.ceilingDB, floor + Self.marginDB))
+            threshold = SpeechRule.threshold(noiseFloorDB: SpeechRule.noiseFloor(frameDBs: history))
         }
         return db > threshold
     }

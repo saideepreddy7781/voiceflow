@@ -36,6 +36,8 @@ public enum MeetingDetector {
            AppClassifier.browsers.contains(id) || id.hasPrefix("com.google.Chrome") {
             title = ContextReader.frontWindowTitle()
         }
-        return detect(runningBundleIDs: running, micInUse: AudioDevices.defaultInputInUse(), browserTitle: title)
+        // Another app recording, from any input, is the call. The default input "in use" also counts VoiceFlow itself.
+        let micInUse = AudioDevices.anotherAppIsRecording() ?? AudioDevices.defaultInputInUse()
+        return detect(runningBundleIDs: running, micInUse: micInUse, browserTitle: title)
     }
 }
