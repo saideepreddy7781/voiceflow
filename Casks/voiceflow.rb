@@ -1,6 +1,6 @@
 cask "voiceflow" do
-  version "0.2.0"
-  sha256 "98aee0e5e1a1bec454e820e9d7af5c8b5532c002c7751839be62ebe6e95e088e"
+  version "0.3.0"
+  sha256 "ecad668a6fb7dbe9f94c89a7102f970cebc087179ace663e419dbce7fb12d2da"
 
   url "https://github.com/saideepreddy7781/voiceflow/releases/download/v#{version}/VoiceFlow-#{version}-macOS.dmg"
   name "VoiceFlow"
