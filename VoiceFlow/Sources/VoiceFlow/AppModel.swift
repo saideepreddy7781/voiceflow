@@ -274,6 +274,8 @@ final class AppModel {
 
     func updateFlowBarVisibility() {
         pill.showWhenIdle = preferences.onboarded && preferences.showBarWhenIdle && !flowBarHiddenForHour
+        if pill.spots != preferences.flowBarSpots { pill.spots = preferences.flowBarSpots }
+        if pill.draggable != preferences.flowBarDraggable { pill.draggable = preferences.flowBarDraggable }
     }
 
     /// Call only after launch: during App.init the shared NSApplication does not exist yet.
@@ -298,7 +300,10 @@ final class AppModel {
             diagnostics.persists = preferences.historyRetentionDays != 0
         }
         if preferences.launchAtLogin != old.launchAtLogin { applyLaunchAtLogin() }
-        if preferences.showBarWhenIdle != old.showBarWhenIdle || preferences.onboarded != old.onboarded { updateFlowBarVisibility() }
+        if preferences.showBarWhenIdle != old.showBarWhenIdle || preferences.onboarded != old.onboarded
+            || preferences.flowBarSpots != old.flowBarSpots || preferences.flowBarDraggable != old.flowBarDraggable {
+            updateFlowBarVisibility()
+        }
         if preferences.showInDock != old.showInDock { applyDockVisibility() }
         if preferences.checkForUpdates != old.checkForUpdates { updates.setAutomatic(preferences.checkForUpdates) }
     }

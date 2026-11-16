@@ -173,6 +173,10 @@ public struct Preferences: Equatable, Codable, Sendable {
     // System
     /// "Show Flow Bar at all times".
     public var showBarWhenIdle: Bool = false
+    /// Drag the Flow bar to move it.
+    public var flowBarDraggable: Bool = true
+    /// Where the Flow bar was dragged to, per display arrangement. Empty: bottom centre.
+    public var flowBarSpots = FlowBarSpots()
     public var showInDock: Bool = true
     /// 0 keeps no history; -1 keeps it forever.
     public var historyRetentionDays: Int = 30
@@ -211,7 +215,7 @@ public struct Preferences: Equatable, Codable, Sendable {
         case languages, teluguScript, hindiScript, cleanupLevel, commandModeEnabled, styles, autoLearnWords
         case inputDeviceUID, whisperMode, muteAudioWhileDictating, playSounds
         case meetingsDetect, meetingsSystemAudio, meetingsFolder, meetingsNotesLanguage, meetingsUseCalendar, meetingsConsentReminder
-        case showBarWhenIdle, showInDock, historyRetentionDays, launchAtLogin, debugLogging, onboarded
+        case showBarWhenIdle, flowBarDraggable, flowBarSpots, showInDock, historyRetentionDays, launchAtLogin, debugLogging, onboarded
         case checkForUpdates, dismissedUpdateVersion
         // Older versions
         case language, cleanupEnabled
@@ -255,6 +259,8 @@ public struct Preferences: Equatable, Codable, Sendable {
         meetingsUseCalendar = value(.meetingsUseCalendar, d.meetingsUseCalendar)
         meetingsConsentReminder = value(.meetingsConsentReminder, d.meetingsConsentReminder)
         showBarWhenIdle = value(.showBarWhenIdle, d.showBarWhenIdle)
+        flowBarDraggable = value(.flowBarDraggable, d.flowBarDraggable)
+        flowBarSpots = value(.flowBarSpots, d.flowBarSpots)
         showInDock = value(.showInDock, d.showInDock)
         historyRetentionDays = value(.historyRetentionDays, d.historyRetentionDays)
         launchAtLogin = value(.launchAtLogin, d.launchAtLogin)
@@ -290,6 +296,8 @@ public struct Preferences: Equatable, Codable, Sendable {
         try c.encode(meetingsUseCalendar, forKey: .meetingsUseCalendar)
         try c.encode(meetingsConsentReminder, forKey: .meetingsConsentReminder)
         try c.encode(showBarWhenIdle, forKey: .showBarWhenIdle)
+        try c.encode(flowBarDraggable, forKey: .flowBarDraggable)
+        try c.encode(flowBarSpots, forKey: .flowBarSpots)
         try c.encode(showInDock, forKey: .showInDock)
         try c.encode(historyRetentionDays, forKey: .historyRetentionDays)
         try c.encode(launchAtLogin, forKey: .launchAtLogin)

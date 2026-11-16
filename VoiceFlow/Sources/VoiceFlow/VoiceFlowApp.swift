@@ -1,13 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// `--screenshots <dir>` renders the UI with demo data and quits. Everything else starts the real app.
+/// `--screenshots <dir>` renders the UI with demo data and quits. `--capsule-selftest <out.json>` checks the
+/// Flow bar on the real window server and quits. Everything else starts the real app.
 @main
 @MainActor
 enum Launch {
     static func main() {
         if let directory = ScreenshotMode.requestedDirectory(CommandLine.arguments) {
             ScreenshotMode.run(to: directory)
+        }
+        if let output = FlowBarSelfTest.requestedOutput(CommandLine.arguments) {
+            FlowBarSelfTest.run(to: output)
         }
         VoiceFlowApp.main()
     }
